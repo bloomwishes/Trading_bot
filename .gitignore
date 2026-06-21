@@ -1,0 +1,8 @@
+venv/
+node_modules/
+__pycache__/
+*.db
+*.sqlite3
+logs/
+.env
+.DS_Store

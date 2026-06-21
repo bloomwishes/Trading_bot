@@ -1,0 +1,59 @@
+"""
+AutoTrader Pro - Database Module
+SQLAlchemy engine, session factory, declarative base, and FastAPI dependency.
+"""
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from typing import Generator
+
+from backend.config import settings
+
+# ---------------------------------------------------------------------------
+# Engine – SQLite stored at BOT/autotrader.db
+# ---------------------------------------------------------------------------
+DATABASE_URL = f"sqlite:///{settings.DB_PATH}"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False},  # required for SQLite + threads
+    echo=False,
+    pool_pre_ping=True,
+)
+
+# ---------------------------------------------------------------------------
+# Session factory
+# ---------------------------------------------------------------------------
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+# ---------------------------------------------------------------------------
+# Declarative base for ORM models
+# ---------------------------------------------------------------------------
+Base = declarative_base()
+
+
+# ---------------------------------------------------------------------------
+# Table creation helper
+# ---------------------------------------------------------------------------
+def init_db() -> None:
+    """Import all models and create tables that don't yet exist."""
+    # Side-effect import to ensure every model is registered on Base.metadata
+    import backend.models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
+
+
+# ---------------------------------------------------------------------------
+# FastAPI dependency
+# ---------------------------------------------------------------------------
+def get_db() -> Generator[Session, None, None]:
+    """Yield a DB session that is automatically closed after the request."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
