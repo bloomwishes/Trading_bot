@@ -39,12 +39,12 @@ async def get_portfolio_snapshots(
     query = db.query(PortfolioSnapshot)
 
     if date_from is not None:
-        query = query.filter(PortfolioSnapshot.timestamp >= date_from)
+        query = query.filter(PortfolioSnapshot.created_at >= date_from)
     if date_to is not None:
-        query = query.filter(PortfolioSnapshot.timestamp <= date_to)
+        query = query.filter(PortfolioSnapshot.created_at <= date_to)
 
     # Latest *limit* records, but return in chronological order
-    snapshots = query.order_by(desc(PortfolioSnapshot.timestamp)).limit(limit).all()
+    snapshots = query.order_by(desc(PortfolioSnapshot.created_at)).limit(limit).all()
     snapshots.reverse()
 
     return snapshots
@@ -89,8 +89,8 @@ async def get_current_portfolio(
     for trade in open_trades:
         current_price: float = trade.entry_price  # fallback
         try:
-            ticker = engine.exchange_manager.fetch_ticker(trade.pair)
-            current_price = float(ticker.get("last", trade.entry_price)) if isinstance(ticker, dict) else float(ticker)
+            ticker = engine.exchange_manager.get_ticker(trade.pair)
+            current_price = float(ticker.get("last_price", trade.entry_price)) if isinstance(ticker, dict) else float(ticker)
         except Exception:
             pass
 

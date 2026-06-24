@@ -9,6 +9,7 @@ import {
   Shield,
   Brain,
   Terminal,
+  Activity,
   Zap,
 } from 'lucide-react';
 
@@ -19,7 +20,8 @@ const navItems = [
   { path: '/scanner', label: 'Scanner', icon: Radar },
   { path: '/strategies', label: 'Strategies', icon: Settings2 },
   { path: '/risk', label: 'Risk', icon: Shield },
-  { path: '/llm', label: 'AI Decisions', icon: Brain },
+  { path: '/llm', label: 'AI Agent', icon: Brain },
+  { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
   { path: '/logs', label: 'Logs', icon: Terminal },
 ];
 

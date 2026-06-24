@@ -10,6 +10,8 @@ import RiskSettings from './pages/RiskSettings';
 import LLMDecisions from './pages/LLMDecisions';
 import BotLogs from './pages/BotLogs';
 
+import Diagnostics from './pages/Diagnostics';
+
 export default function App() {
   return (
     <Routes>
@@ -21,6 +23,7 @@ export default function App() {
         <Route path="strategies" element={<StrategyConfig />} />
         <Route path="risk" element={<RiskSettings />} />
         <Route path="llm" element={<LLMDecisions />} />
+        <Route path="diagnostics" element={<Diagnostics />} />
         <Route path="logs" element={<BotLogs />} />
       </Route>
     </Routes>

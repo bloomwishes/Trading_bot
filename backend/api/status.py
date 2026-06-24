@@ -64,10 +64,16 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
             paper = engine.paper_trader
             cash_balance = float(getattr(paper, "balance", 0))
             total_value = cash_balance
-            # Add value of open positions
+            # Add value of open positions (mark-to-market using current price)
             if hasattr(paper, "positions"):
                 for pos in paper.positions.values():
-                    total_value += pos.get("entry_price", 0) * pos.get("quantity", 0)
+                    current_price = pos.get("entry_price", 0)
+                    try:
+                        ticker = engine.exchange_manager.get_ticker(pos["pair"])
+                        current_price = float(ticker.get("last_price", current_price)) if isinstance(ticker, dict) else float(ticker)
+                    except Exception:
+                        pass
+                    total_value += current_price * pos.get("quantity", 0)
         else:
             exchange = engine.exchange_manager
             balance = exchange.fetch_balance() if hasattr(exchange, "fetch_balance") else {}

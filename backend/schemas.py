@@ -18,8 +18,11 @@ class TradeCreate(BaseModel):
     """Body for manually opening a trade."""
     pair: str = Field(..., examples=["BTC/INR"])
     side: str = Field(..., pattern="^(BUY|SELL)$", examples=["BUY"])
-    quantity: float = Field(..., gt=0, examples=[0.001])
+    quantity: Optional[float] = Field(default=None, gt=0, examples=[0.001])
+    amount_inr: Optional[float] = Field(default=None, gt=0, examples=[500.0])
     strategy: str = Field(default="manual", examples=["manual"])
+    stop_loss: Optional[float] = Field(default=None, examples=[1.5])
+    take_profit: Optional[float] = Field(default=None, examples=[3.0])
 
 
 class TradeResponse(BaseModel):
@@ -28,9 +31,12 @@ class TradeResponse(BaseModel):
     strategy: str
     side: str
     entry_price: float
+    current_price: Optional[float] = None
     exit_price: Optional[float] = None
     quantity: float
+    amount_inr: float
     pnl: Optional[float] = None
+    pnl_pct: Optional[float] = None
     status: str
     paper_mode: bool
     stop_loss: Optional[float] = None
@@ -38,6 +44,8 @@ class TradeResponse(BaseModel):
     trailing_stop: Optional[float] = None
     created_at: datetime
     closed_at: Optional[datetime] = None
+    entry_reason: Optional[str] = None
+    exit_reason: Optional[str] = None
 
     class Config:
         from_attributes = True          # Pydantic v2 (orm_mode equivalent)

@@ -55,23 +55,28 @@ class GridTradingStrategy(StrategyBase):
         merged = {**self.DEFAULT_PARAMS, **(params or {})}
         super().__init__(name="Grid_Trading", default_params=merged)
 
-        # Instance state — persisted across analyze() calls
-        self.grid_levels: List[float] = []
-        self.grid_centre: float = 0.0
-        self.active_orders: Dict[int, Dict[str, Any]] = {}
-        self.hit_levels: set = set()
+        # Persisted state per pair: {pair: {"levels": [], "centre": 0.0, "active_orders": {}, "hit_levels": set()}}
+        self.grids: Dict[str, Dict[str, Any]] = {}
+
+    def _get_grid_state(self, pair: str) -> Dict[str, Any]:
+        """Get or initialize grid state for a specific pair."""
+        if pair not in self.grids:
+            self.grids[pair] = {
+                "levels": [],
+                "centre": 0.0,
+                "active_orders": {},
+                "hit_levels": set(),
+            }
+        return self.grids[pair]
 
     # ------------------------------------------------------------------
     # Grid management
     # ------------------------------------------------------------------
-    def setup_grid(self, current_price: float) -> List[float]:
+    def setup_grid(self, current_price: float, pair: str) -> List[float]:
         """
-        Create evenly-spaced grid levels around `current_price`.
+        Create evenly-spaced grid levels around `current_price` for `pair`.
 
         Returns the full sorted list of levels.
-
-        Example with num_levels=3, spacing=1%, price=10000:
-          [9700, 9800, 9900, 10000, 10100, 10200, 10300]
         """
         spacing_pct = self.params["grid_spacing_pct"]
         num_levels = self.params["num_levels"]
@@ -82,44 +87,44 @@ class GridTradingStrategy(StrategyBase):
             levels.append(round(level, 2))
 
         levels.sort()
-        self.grid_levels = levels
-        self.grid_centre = current_price
-        self.hit_levels = set()
+        state = self._get_grid_state(pair)
+        state["levels"] = levels
+        state["centre"] = current_price
+        state["hit_levels"] = set()
 
         # Initialise active orders map
-        self.active_orders = {}
+        state["active_orders"] = {}
         for idx, level in enumerate(levels):
             side = "BUY" if level < current_price else ("SELL" if level > current_price else "CENTRE")
-            self.active_orders[idx] = {
+            state["active_orders"][idx] = {
                 "level": level,
                 "side": side,
                 "status": "PENDING",
             }
 
         bot_logger.info(
-            f"[Grid_Trading] Grid created: centre=₹{current_price:.2f}, "
+            f"[Grid_Trading] Grid created for {pair}: centre=₹{current_price:.2f}, "
             f"{len(levels)} levels from ₹{levels[0]:.2f} to ₹{levels[-1]:.2f}, "
             f"spacing={spacing_pct}%"
         )
         return levels
 
-    def _needs_rebalance(self, current_price: float) -> bool:
+    def _needs_rebalance(self, current_price: float, pair: str) -> bool:
         """Check whether the price has moved far enough to require a grid rebuild."""
-        if self.grid_centre == 0:
+        state = self._get_grid_state(pair)
+        centre = state["centre"]
+        if centre == 0:
             return True
-        distance_pct = abs(current_price - self.grid_centre) / self.grid_centre * 100
+        distance_pct = abs(current_price - centre) / centre * 100
         return distance_pct > self.params["rebalance_threshold_pct"]
 
     def check_grid_hit(self, current_price: float, pair: str) -> Optional[StrategySignal]:
         """
         Check whether the current price has hit any un-triggered grid level.
-
-        A level is "hit" when the price crosses it (within a small tolerance
-        of 0.1% to account for micro-fluctuations).
-
-        Returns the highest-priority signal (closest level hit), or None.
         """
-        if not self.grid_levels:
+        state = self._get_grid_state(pair)
+        levels = state["levels"]
+        if not levels:
             return None
 
         tolerance_pct = 0.1  # price must be within 0.1% of level
@@ -128,10 +133,10 @@ class GridTradingStrategy(StrategyBase):
         best_signal: Optional[StrategySignal] = None
         best_distance = float("inf")
 
-        for idx, order_info in self.active_orders.items():
+        for idx, order_info in state["active_orders"].items():
             if order_info["status"] != "PENDING":
                 continue
-            if idx in self.hit_levels:
+            if idx in state["hit_levels"]:
                 continue
             if order_info["side"] == "CENTRE":
                 continue
@@ -145,17 +150,15 @@ class GridTradingStrategy(StrategyBase):
                 quantity = capital / current_price if current_price > 0 else 0
 
                 reason = (
-                    f"Grid level hit: ₹{level:.2f} ({action}). "
-                    f"Price ₹{current_price:.2f}, grid centre ₹{self.grid_centre:.2f}. "
+                    f"Grid level hit for {pair}: ₹{level:.2f} ({action}). "
+                    f"Price ₹{current_price:.2f}, grid centre ₹{state['centre']:.2f}. "
                     f"Allocated ₹{capital:.0f} per level."
                 )
 
-                # Strength based on how close to the centre the level is
-                # Levels closer to centre are lower-risk entries
                 grid_half_range = (
-                    self.grid_levels[-1] - self.grid_levels[0]
-                ) / 2 if len(self.grid_levels) > 1 else 1
-                distance_from_centre = abs(level - self.grid_centre)
+                    levels[-1] - levels[0]
+                ) / 2 if len(levels) > 1 else 1
+                distance_from_centre = abs(level - state["centre"])
                 strength = max(
                     0.3,
                     min(1.0, 0.5 + 0.5 * (1 - distance_from_centre / grid_half_range)),
@@ -170,16 +173,16 @@ class GridTradingStrategy(StrategyBase):
                     metadata={
                         "grid_level": level,
                         "grid_level_index": idx,
-                        "grid_centre": self.grid_centre,
+                        "grid_centre": state["centre"],
                         "quantity": quantity,
                         "capital_per_grid": capital,
-                        "total_grid_levels": len(self.grid_levels),
-                        "grid_levels": self.grid_levels.copy(),
+                        "total_grid_levels": len(levels),
+                        "grid_levels": levels.copy(),
                     },
                 )
                 # Mark level as hit
-                self.hit_levels.add(idx)
-                self.active_orders[idx]["status"] = "TRIGGERED"
+                state["hit_levels"].add(idx)
+                state["active_orders"][idx]["status"] = "TRIGGERED"
 
         return best_signal
 
@@ -189,15 +192,6 @@ class GridTradingStrategy(StrategyBase):
     def analyze(self, df: pd.DataFrame, pair: str) -> Optional[StrategySignal]:
         """
         Check grid state and return a signal if a level has been hit.
-
-        On first call (or after rebalance), the grid is created.
-
-        Args:
-            df: OHLCV DataFrame.
-            pair: Trading pair string.
-
-        Returns:
-            StrategySignal if a grid level is triggered, else None.
         """
         if df is None or len(df) < 2:
             return None
@@ -208,19 +202,20 @@ class GridTradingStrategy(StrategyBase):
             if current_price <= 0:
                 return None
 
+            state = self._get_grid_state(pair)
+
             # ------------------------------------------------------------------
             # 1. Initial grid setup or rebalance
             # ------------------------------------------------------------------
-            if not self.grid_levels or self._needs_rebalance(current_price):
-                if self.grid_levels:
+            if not state["levels"] or self._needs_rebalance(current_price, pair):
+                if state["levels"]:
                     bot_logger.info(
                         f"[Grid_Trading] Rebalancing grid for {pair}. "
                         f"Price ₹{current_price:.2f} moved "
-                        f"{abs(current_price - self.grid_centre) / self.grid_centre * 100:.1f}% "
-                        f"from centre ₹{self.grid_centre:.2f}"
+                        f"{abs(current_price - state['centre']) / state['centre'] * 100:.1f}% "
+                        f"from centre ₹{state['centre']:.2f}"
                     )
-                self.setup_grid(current_price)
-                # After setup, price is at centre — no levels hit yet
+                self.setup_grid(current_price, pair)
                 return None
 
             # ------------------------------------------------------------------
@@ -245,22 +240,29 @@ class GridTradingStrategy(StrategyBase):
     # ------------------------------------------------------------------
     # Utility
     # ------------------------------------------------------------------
-    def get_grid_status(self) -> Dict[str, Any]:
-        """Return a snapshot of the current grid state for dashboards."""
+    def get_grid_status(self, pair: Optional[str] = None) -> Dict[str, Any]:
+        """Return a snapshot of the grid state for a pair (or all grids)."""
+        if pair:
+            state = self._get_grid_state(pair)
+            return {
+                "centre": state["centre"],
+                "levels": state["levels"].copy(),
+                "active_orders": {
+                    k: v.copy() for k, v in state["active_orders"].items()
+                },
+                "hit_levels": list(state["hit_levels"]),
+                "params": self.params.copy(),
+            }
         return {
-            "centre": self.grid_centre,
-            "levels": self.grid_levels.copy(),
-            "active_orders": {
-                k: v.copy() for k, v in self.active_orders.items()
-            },
-            "hit_levels": list(self.hit_levels),
-            "params": self.params.copy(),
+            p: {
+                "centre": s["centre"],
+                "levels": s["levels"].copy(),
+                "active_orders": {k: v.copy() for k, v in s["active_orders"].items()},
+                "hit_levels": list(s["hit_levels"]),
+            } for p, s in self.grids.items()
         }
 
     def reset_grid(self):
-        """Tear down the current grid (next analyze() will rebuild it)."""
-        self.grid_levels = []
-        self.grid_centre = 0.0
-        self.active_orders = {}
-        self.hit_levels = set()
-        bot_logger.info("[Grid_Trading] Grid reset")
+        """Tear down all grids (next analyze() will rebuild them)."""
+        self.grids.clear()
+        bot_logger.info("[Grid_Trading] All grids reset")

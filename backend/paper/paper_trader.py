@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.config import settings
 from backend.database import SessionLocal
-from backend.models import Trade
+from backend.models import Trade, PortfolioSnapshot
 from backend.utils.helpers import calculate_pnl, format_inr
 from backend.utils.logger import bot_logger
 
@@ -25,12 +25,41 @@ class PaperTrader:
     """
 
     def __init__(self, initial_balance: Optional[float] = None) -> None:
-        self.balance: float = initial_balance or settings.PAPER_BALANCE
         # positions: {trade_id: position_dict}
         self.positions: Dict[int, Dict[str, Any]] = {}
 
         # Restore any trades that were still OPEN from a previous run
         self._restore_open_positions()
+
+    @property
+    def balance(self) -> float:
+        """Calculate the current paper trading cash balance dynamically from trades in DB.
+
+        Cash Balance = starting_balance + sum(pnl of closed trades) - sum(entry cost of open BUY trades)
+        """
+        session = SessionLocal()
+        try:
+            from sqlalchemy import func
+            
+            # Sum PnL of all closed paper trades
+            closed_pnl = session.query(func.sum(Trade.pnl)).filter(
+                Trade.status == "CLOSED",
+                Trade.paper_mode.is_(True)
+            ).scalar() or 0.0
+
+            # Sum entry cost of all open paper BUY trades
+            open_buy_cost = session.query(func.sum(Trade.entry_price * Trade.quantity)).filter(
+                Trade.status == "OPEN",
+                Trade.side == "BUY",
+                Trade.paper_mode.is_(True)
+            ).scalar() or 0.0
+
+            return round(settings.PAPER_BALANCE + closed_pnl - open_buy_cost, 2)
+        except Exception as exc:
+            bot_logger.error(f"Error calculating paper balance dynamically: {exc}")
+            return settings.PAPER_BALANCE
+        finally:
+            session.close()
 
     # ── Restore on startup ─────────────────────────────────────────────
     def _restore_open_positions(self) -> None:
@@ -55,6 +84,7 @@ class PaperTrader:
                     "trailing_stop": t.trailing_stop,
                     "created_at": t.created_at.isoformat() if t.created_at else None,
                 }
+
             if open_trades:
                 bot_logger.info(
                     f"PaperTrader restored {len(open_trades)} open position(s)"
@@ -74,6 +104,7 @@ class PaperTrader:
         strategy: str = "manual",
         stop_loss: Optional[float] = None,
         take_profit: Optional[float] = None,
+        entry_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Open a paper trade at the given price.
 
@@ -90,8 +121,6 @@ class PaperTrader:
                     f"Need {format_inr(notional)}, have {format_inr(self.balance)}"
                 )
                 return {"error": "Insufficient paper balance"}
-            self.balance -= notional
-        # For SELL (short), we don't deduct – we track the notional obligation
 
         session = SessionLocal()
         try:
@@ -105,6 +134,7 @@ class PaperTrader:
                 paper_mode=True,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
+                entry_reason=entry_reason,
                 created_at=datetime.utcnow(),
             )
             session.add(trade)
@@ -121,6 +151,7 @@ class PaperTrader:
                 "stop_loss": stop_loss,
                 "take_profit": take_profit,
                 "trailing_stop": None,
+                "entry_reason": entry_reason,
                 "created_at": trade.created_at.isoformat(),
             }
             self.positions[trade.id] = pos
@@ -143,6 +174,7 @@ class PaperTrader:
         self,
         trade_id: int,
         current_price: float,
+        exit_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Close a paper trade at *current_price*.
 
@@ -160,12 +192,6 @@ class PaperTrader:
             side=pos["side"],
         )
 
-        # Credit balance
-        if pos["side"] == "BUY":
-            self.balance += current_price * pos["quantity"]
-        else:
-            self.balance += pos["entry_price"] * pos["quantity"] + pnl
-
         now = datetime.utcnow()
 
         session = SessionLocal()
@@ -176,6 +202,7 @@ class PaperTrader:
                 db_trade.pnl = round(pnl, 2)
                 db_trade.status = "CLOSED"
                 db_trade.closed_at = now
+                db_trade.exit_reason = exit_reason
                 session.commit()
 
             del self.positions[trade_id]

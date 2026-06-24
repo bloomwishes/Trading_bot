@@ -278,22 +278,28 @@ class TradingEngine:
             if current_price <= 0:
                 return None
 
-            trade_result = self._execute_trade(
-                pair=pair,
-                side="SELL",
-                quantity=0,  # Determined by existing position
-                price=current_price,
-                stop_loss=0,
-                take_profit=0,
-                signal=signal,
+            open_trades = (
+                db.query(Trade)
+                .filter(
+                    Trade.status == "OPEN",
+                    Trade.pair == pair,
+                    Trade.strategy == signal.strategy,
+                )
+                .all()
             )
 
-            if trade_result:
-                if self.mode != "paper":
-                    self._save_trade(trade_result, signal, db)
-                return trade_result
+            actions = []
+            for trade in open_trades:
+                try:
+                    self._close_trade_internal(trade, current_price, "STRATEGY_SELL", db)
+                    actions.append({"id": trade.id, "pair": pair, "side": "SELL", "price": current_price})
+                except Exception as e:
+                    bot_logger.error(f"[Engine] Failed to close trade {trade.id} on SELL signal: {e}")
 
-        return None
+            if actions:
+                return {"message": f"Closed {len(actions)} trades on SELL signal", "actions": actions}
+            
+            return None
 
     def _execute_trade(
         self,
@@ -317,6 +323,10 @@ class TradingEngine:
                     side=side,
                     quantity=quantity,
                     price=price,
+                    strategy=signal.strategy,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    entry_reason=signal.reason if signal else "Strategy trade",
                 )
             else:
                 result = self.exchange_manager.place_order(
@@ -424,13 +434,14 @@ class TradingEngine:
         entry_price = float(trade.entry_price)
         quantity = float(trade.quantity)
 
-        pnl = calculate_pnl(entry_price, exit_price, quantity)
-        pnl_pct = calculate_pnl_pct(entry_price, exit_price)
+        pnl = calculate_pnl(entry_price, exit_price, quantity, trade.side)
+        pnl_pct = calculate_pnl_pct(entry_price, exit_price, trade.side)
 
         trade.exit_price = exit_price
         trade.pnl = pnl
         trade.status = "CLOSED"
         trade.closed_at = timestamp_now()
+        trade.exit_reason = reason
 
         # Execute the close on paper / live
         try:
@@ -438,6 +449,7 @@ class TradingEngine:
                 self.paper_trader.close_trade(
                     trade_id=trade.id,
                     current_price=exit_price,
+                    exit_reason=reason,
                 )
             else:
                 self.exchange_manager.place_order(

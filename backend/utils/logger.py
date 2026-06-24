@@ -13,14 +13,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
-from websockets.legacy.server import WebSocketServerProtocol
+from fastapi import WebSocket
 
 from backend.config import settings
+
+# Real-time AI agent status tracking
+ai_status: dict[str, Any] = {
+    "status": "idle",
+    "current_task": "Idle",
+    "last_active": None,
+    "model": settings.OLLAMA_MODEL,
+    "fallback_model": settings.OLLAMA_FALLBACK_MODEL,
+}
 
 # ---------------------------------------------------------------------------
 # WebSocket connections pool (populated by the API layer)
 # ---------------------------------------------------------------------------
-ws_connections: List[WebSocketServerProtocol] = []
+ws_connections: List[WebSocket] = []
 
 # ---------------------------------------------------------------------------
 # Ensure log directory exists
@@ -128,16 +137,16 @@ class BotLogger:
             }
         )
 
-        stale: list[WebSocketServerProtocol] = []
+        stale: list[WebSocket] = []
 
         for ws in ws_connections:
             try:
                 # Schedule the coroutine on the running event loop (if any)
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    asyncio.ensure_future(ws.send(payload))
+                    asyncio.ensure_future(ws.send_text(payload))
                 else:
-                    loop.run_until_complete(ws.send(payload))
+                    loop.run_until_complete(ws.send_text(payload))
             except Exception:
                 stale.append(ws)
 

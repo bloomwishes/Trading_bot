@@ -25,7 +25,7 @@ class ExchangeManager:
     * Ticker and market-list results are cached for 60 s to reduce API load.
     """
 
-    CACHE_TTL: int = 60  # seconds
+    CACHE_TTL: int = 10  # seconds
 
     def __init__(self) -> None:
         self._coindcx = CoinDCXClient(

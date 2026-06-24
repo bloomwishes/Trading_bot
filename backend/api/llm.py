@@ -48,3 +48,34 @@ async def get_llm_decisions(
         query = query.filter(LLMDecision.created_at <= date_to)
 
     return query.order_by(desc(LLMDecision.created_at)).offset(offset).limit(limit).all()
+
+
+@router.get("/status", summary="Get Ollama real-time status")
+async def get_llm_status() -> dict[str, Any]:
+    """
+    Returns real-time status of local Ollama AI agent.
+    """
+    from backend.utils.logger import ai_status
+    import requests
+    from backend.config import settings
+
+    connected = False
+    installed_models = []
+    try:
+        res = requests.get(f"{settings.OLLAMA_HOST}/api/tags", timeout=2)
+        if res.status_code == 200:
+            connected = True
+            installed_models = [m.get("name") for m in res.json().get("models", [])]
+    except Exception:
+        pass
+
+    return {
+        "connected": connected,
+        "host": settings.OLLAMA_HOST,
+        "configured_model": settings.OLLAMA_MODEL,
+        "fallback_model": settings.OLLAMA_FALLBACK_MODEL,
+        "installed_models": installed_models,
+        "status": ai_status.get("status", "idle"),
+        "current_task": ai_status.get("current_task", "Idle"),
+        "last_active": ai_status.get("last_active"),
+    }

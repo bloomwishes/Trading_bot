@@ -46,6 +46,23 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
 
+    # Dynamic SQLite migrations for new columns
+    import sqlite3
+    from backend.config import settings
+    conn = sqlite3.connect(settings.DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE trades ADD COLUMN entry_reason VARCHAR(256)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cursor.execute("ALTER TABLE trades ADD COLUMN exit_reason VARCHAR(256)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    conn.close()
+
 
 # ---------------------------------------------------------------------------
 # FastAPI dependency

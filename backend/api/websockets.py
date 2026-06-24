@@ -102,12 +102,12 @@ async def _fetch_ticker_safe(engine: Any, pair: str) -> dict[str, Any]:
     """
     try:
         exchange = engine.exchange_manager
-        ticker = exchange.fetch_ticker(pair)
+        ticker = exchange.get_ticker(pair)
         if isinstance(ticker, dict):
             return {
-                "price": float(ticker.get("last", 0)),
-                "change_24h": float(ticker.get("percentage", 0)),
-                "volume": float(ticker.get("quoteVolume", ticker.get("baseVolume", 0))),
+                "price": float(ticker.get("last_price", 0)),
+                "change_24h": float(ticker.get("change_24h", 0)),
+                "volume": float(ticker.get("volume", 0)),
             }
         return {"price": float(ticker), "change_24h": 0.0, "volume": 0.0}
     except Exception:

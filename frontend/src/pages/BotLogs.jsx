@@ -9,7 +9,7 @@ export default function BotLogs() {
   const logContainerRef = useRef(null);
   const maxLogs = 500;
 
-  const { data: wsData, isConnected } = useWebSocket('ws://localhost:8000/ws/logs');
+  const { data: wsData, isConnected } = useWebSocket('/ws/logs');
 
   useEffect(() => {
     if (wsData && !paused) {

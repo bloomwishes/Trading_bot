@@ -20,7 +20,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from backend.config import settings
 from backend.database import SessionLocal
-from backend.models import BotLog
+from backend.models import BotLog, PortfolioSnapshot
 from backend.utils.logger import bot_logger
 from backend.utils.helpers import timestamp_now
 from backend.engine.trading_engine import TradingEngine
@@ -72,7 +72,7 @@ class BotScheduler:
         """Add all periodic jobs to the scheduler."""
         self.scheduler.add_job(
             func=self._job_main_cycle,
-            trigger=IntervalTrigger(seconds=60),
+            trigger=IntervalTrigger(seconds=30),
             id="main_cycle",
             name="Main Trading Cycle",
             replace_existing=True,
@@ -80,7 +80,7 @@ class BotScheduler:
 
         self.scheduler.add_job(
             func=self._job_check_stops,
-            trigger=IntervalTrigger(seconds=30),
+            trigger=IntervalTrigger(seconds=10),
             id="check_stops",
             name="Check Stop-Loss / Take-Profit",
             replace_existing=True,
@@ -88,7 +88,7 @@ class BotScheduler:
 
         self.scheduler.add_job(
             func=self._job_scan_opportunities,
-            trigger=IntervalTrigger(seconds=60),
+            trigger=IntervalTrigger(seconds=30),
             id="scan_opportunities",
             name="Opportunity Scanner",
             replace_existing=True,
@@ -167,18 +167,30 @@ class BotScheduler:
     # Portfolio snapshot persistence
     # ------------------------------------------------------------------
     def _save_portfolio_snapshot(self, value: float):
-        """Write a portfolio-value log entry to the database."""
+        """Write a portfolio snapshot to the database."""
         db = SessionLocal()
         try:
-            log = BotLog(
-                event="PORTFOLIO_SNAPSHOT",
-                details=json.dumps({
-                    "portfolio_value_inr": round(value, 2),
-                    "mode": self.trading_engine.mode,
-                }),
+            cash = value
+            positions = []
+            try:
+                if self.trading_engine.mode == "paper":
+                    cash = self.trading_engine.paper_trader.get_balance()
+                    positions = self.trading_engine.paper_trader.get_positions()
+                else:
+                    # Live balance fetching can be implemented or default to cash value
+                    balance = self.trading_engine.exchange_manager.get_balances()
+                    cash = float(balance.get("INR", {}).get("available", value))
+            except Exception:
+                pass
+
+            snapshot = PortfolioSnapshot(
+                total_value=value,
+                cash=cash,
+                positions_json=json.dumps(positions),
+                paper_mode=(self.trading_engine.mode == "paper"),
                 created_at=timestamp_now(),
             )
-            db.add(log)
+            db.add(snapshot)
             db.commit()
         except Exception as e:
             db.rollback()

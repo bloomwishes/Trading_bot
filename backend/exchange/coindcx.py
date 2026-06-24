@@ -158,7 +158,8 @@ class CoinDCXClient:
         if not quote:
             # No separator found; assume last 3 chars are the quote currency
             base, quote = pair[:-3], pair[-3:]
-        market_pair = f"B-{base.upper()}_{quote.upper()}"
+        prefix = "I" if quote.upper() == "INR" else "B"
+        market_pair = f"{prefix}-{base.upper()}_{quote.upper()}"
         mapped_interval = self._INTERVAL_MAP.get(interval, interval)
 
         self._rate_limit()

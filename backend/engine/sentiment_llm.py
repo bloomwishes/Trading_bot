@@ -14,6 +14,7 @@ returns None — it never crashes the bot.
 
 import json
 import re
+from datetime import datetime
 from typing import Optional, Dict, Any
 
 import pandas as pd
@@ -245,9 +246,8 @@ class SentimentLLMStrategy(StrategyBase):
             db = SessionLocal()
             decision = LLMDecision(
                 pair=pair,
-                model=model,
                 prompt=prompt,
-                raw_response=raw_response,
+                response=raw_response,
                 action=action or "PARSE_ERROR",
                 confidence=confidence or 0.0,
                 reason=reason or "Failed to parse LLM response",
@@ -278,6 +278,11 @@ class SentimentLLMStrategy(StrategyBase):
         """
         if df is None or len(df) < 30:
             return None
+
+        from backend.utils.logger import ai_status
+        ai_status["status"] = "generating"
+        ai_status["current_task"] = f"Analyzing {pair} for trading signals"
+        ai_status["last_active"] = datetime.utcnow().isoformat()
 
         try:
             # 1. Build prompt
@@ -388,6 +393,9 @@ class SentimentLLMStrategy(StrategyBase):
                 f"[Sentiment_LLM] Analysis error for {pair}: {e}"
             )
             return None
+        finally:
+            ai_status["status"] = "idle"
+            ai_status["current_task"] = "Idle"
 
 
 # --------------------------------------------------------------------------

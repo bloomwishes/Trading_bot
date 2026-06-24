@@ -1,20 +1,36 @@
 import { useState, useEffect } from 'react';
-import { Brain, Filter, ChevronDown, ChevronUp, CheckCircle, XCircle } from 'lucide-react';
-import { getLLMDecisions } from '../utils/api';
+import { Brain, Filter, ChevronDown, ChevronUp, CheckCircle, XCircle, Cpu, Server, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { getLLMDecisions, getLLMStatus } from '../utils/api';
 import { formatDate } from '../utils/formatters';
 
 export default function LLMDecisions() {
   const [decisions, setDecisions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedRow, setExpandedRow] = useState(null);
+  const [agentStatus, setAgentStatus] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(true);
   const [filters, setFilters] = useState({
     pair: '',
     action: '',
     acted_on: '',
   });
 
+  const fetchStatus = async () => {
+    try {
+      const res = await getLLMStatus();
+      setAgentStatus(res.data || null);
+    } catch (err) {
+      console.error('Failed to fetch LLM status:', err);
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchDecisions();
+    fetchStatus();
+    const statusInterval = setInterval(fetchStatus, 5000); // poll Ollama status every 5s
+    return () => clearInterval(statusInterval);
   }, []);
 
   const fetchDecisions = async () => {
@@ -54,11 +70,80 @@ export default function LLMDecisions() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold font-heading text-white">
-          AI <span className="text-neon-cyan">Decisions</span>
+          AI <span className="text-neon-cyan">Agent</span>
         </h1>
         <p className="text-gray-400 mt-1">
-          Ollama LLM analysis log — every decision the AI has made
+          Ollama LLM status and analysis log — every decision the AI has made
         </p>
+      </div>
+
+      {/* AI Agent Status Section */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="glass-card p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Ollama Connection</span>
+            {agentStatus?.connected ? (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-neon-green/10 border border-neon-green/30 text-neon-green">
+                <Wifi size={12} /> Connected
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-neon-red/10 border border-neon-red/30 text-neon-red animate-pulse">
+                <WifiOff size={12} /> Offline
+              </span>
+            )}
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-cyber-surface border border-gray-700 flex items-center justify-center">
+              <Server size={18} className="text-gray-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white font-mono">{agentStatus?.host || 'http://localhost:11434'}</p>
+              <p className="text-[10px] text-gray-500 font-mono">LLM Host Endpoint</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">Active Model</span>
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan">
+              <Cpu size={12} /> {agentStatus?.configured_model || 'llama3'}
+            </span>
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-cyber-surface border border-gray-700 flex items-center justify-center">
+              <Brain size={18} className="text-neon-cyan drop-shadow-[0_0_6px_rgba(0,240,255,0.4)]" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-white font-mono">{agentStatus?.configured_model || 'llama3'}</p>
+              <p className="text-[10px] text-gray-500 font-mono">Fallback: {agentStatus?.fallback_model || 'mistral'}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card p-5 flex flex-col justify-between">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider">AI Real-time Activity</span>
+            {agentStatus?.status === 'generating' ? (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-neon-yellow/10 border border-neon-yellow/30 text-neon-yellow animate-pulse">
+                <RefreshCw size={12} className="animate-spin" /> Processing
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-800 border border-gray-700 text-gray-400">
+                Idle
+              </span>
+            )}
+          </div>
+          <div className="mt-4 flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-lg bg-cyber-surface border border-gray-700 flex items-center justify-center ${agentStatus?.status === 'generating' ? 'border-neon-yellow/50' : ''}`}>
+              <Cpu size={18} className={agentStatus?.status === 'generating' ? 'text-neon-yellow drop-shadow-[0_0_6px_rgba(255,210,0,0.4)]' : 'text-gray-400'} />
+            </div>
+            <div>
+              <p className={`text-sm font-semibold text-white ${agentStatus?.status === 'generating' ? 'text-neon-yellow' : ''}`}>{agentStatus?.current_task || 'Idle'}</p>
+              <p className="text-[10px] text-gray-500">Real-time status of Ollama</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Filters */}

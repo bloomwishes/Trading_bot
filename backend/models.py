@@ -40,17 +40,35 @@ class Trade(Base):
     trailing_stop = Column(Float, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     closed_at = Column(DateTime, nullable=True)
+    entry_reason = Column(String(256), nullable=True)
+    exit_reason = Column(String(256), nullable=True)
 
     __table_args__ = (
         Index("ix_trades_pair_created", "pair", "created_at"),
         Index("ix_trades_status", "status"),
     )
 
+    @property
+    def amount_inr(self) -> float:
+        """Calculate notional amount in INR."""
+        return round(self.entry_price * self.quantity, 2)
+
+    @property
+    def pnl_pct(self) -> float:
+        """Calculate PnL percentage."""
+        if not self.entry_price or self.exit_price is None:
+            return 0.0
+        if self.side.upper() == "BUY":
+            return round(((self.exit_price - self.entry_price) / self.entry_price) * 100.0, 2)
+        else:
+            return round(((self.entry_price - self.exit_price) / self.entry_price) * 100.0, 2)
+
     def __repr__(self) -> str:
         return (
             f"<Trade id={self.id} {self.side} {self.pair} "
             f"qty={self.quantity} status={self.status}>"
         )
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════

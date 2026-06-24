@@ -54,14 +54,21 @@ export const getPortfolioSnapshots = () => api.get('/portfolio/snapshots');
 export const getPortfolioCurrent = () => api.get('/portfolio/current');
 
 // ==========================================
-// LLM DECISIONS
+// LLM DECISIONS & AI Agent
 // ==========================================
 export const getLLMDecisions = (params) => api.get('/llm/decisions', { params });
+export const getLLMStatus = () => api.get('/llm/status');
+export const closeAllTrades = () => api.post('/trades/close-all');
 
 // ==========================================
 // LIVE MARKET & AI ANALYSIS
 // ==========================================
 export const getLiveMarket = () => api.get('/market/live');
 export const getAIAnalysis = (symbols) => api.get('/market/analyze', { params: { symbols }, timeout: 65000 });
+
+// ==========================================
+// SYSTEM DIAGNOSTICS
+// ==========================================
+export const getDiagnostics = () => api.get('/diagnostics');
 
 export default api;

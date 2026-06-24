@@ -33,13 +33,26 @@ router = APIRouter(tags=["trades"])
 
 @router.get("/api/trades/open", summary="List open trades", response_model=list[TradeResponse])
 async def get_open_trades(
+    request: Request,
     paper_mode: Optional[bool] = Query(None, description="Filter by paper_mode flag"),
     db: Session = Depends(get_db),
 ) -> list[Trade]:
     query = db.query(Trade).filter(Trade.status == "OPEN")
     if paper_mode is not None:
         query = query.filter(Trade.paper_mode == paper_mode)
-    return query.order_by(desc(Trade.created_at)).all()
+    trades = query.order_by(desc(Trade.created_at)).all()
+    
+    engine = request.app.state.engine
+    for t in trades:
+        current_price = t.entry_price
+        try:
+            ticker = engine.exchange_manager.get_ticker(t.pair)
+            current_price = float(ticker.get("last_price", t.entry_price)) if isinstance(ticker, dict) else float(ticker)
+        except Exception:
+            pass
+        t.current_price = current_price
+        
+    return trades
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -90,62 +103,93 @@ async def create_manual_trade(
     engine = request.app.state.engine
     risk_mgr = engine.risk_manager
 
-    # ── Risk validation ──────────────────────────────────────────────────
-    risk_settings = risk_mgr.get_settings()
-
-    # Check max position size
-    max_pos = getattr(risk_settings, "max_position_size_inr", None) or getattr(risk_settings, "max_position_size", None)
-    if max_pos and body.amount_inr > max_pos:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Amount ₹{body.amount_inr:,.2f} exceeds max position size ₹{max_pos:,.2f}.",
-        )
-
-    # Check max open trades
-    max_open = getattr(risk_settings, "max_open_trades", None)
-    if max_open:
-        open_count = db.query(Trade).filter(Trade.status == "OPEN").count()
-        if open_count >= max_open:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Max open trades ({max_open}) reached. Close a trade first.",
-            )
-
     # ── Fetch current price ──────────────────────────────────────────────
     try:
         exchange = engine.exchange_manager
-        ticker = exchange.fetch_ticker(body.pair)
-        current_price = float(ticker.get("last", 0)) if isinstance(ticker, dict) else float(ticker)
+        ticker = exchange.get_ticker(body.pair)
+        current_price = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Could not fetch price for {body.pair}: {exc}") from exc
 
     if current_price <= 0:
         raise HTTPException(status_code=502, detail=f"Invalid price received for {body.pair}.")
 
-    # ── Create trade record ──────────────────────────────────────────────
-    quantity = body.amount_inr / current_price
+    # ── Quantity and Amount INR calculations ──────────────────────────────
+    if body.amount_inr is not None:
+        amount_inr = body.amount_inr
+        quantity = amount_inr / current_price
+    elif body.quantity is not None:
+        quantity = body.quantity
+        amount_inr = quantity * current_price
+    else:
+        raise HTTPException(status_code=400, detail="Must provide either quantity or amount_inr.")
 
-    trade = Trade(
-        pair=body.pair.upper(),
-        side=body.side.upper(),
-        entry_price=current_price,
-        quantity=quantity,
-        amount_inr=body.amount_inr,
-        strategy="MANUAL",
-        status="OPEN",
-        paper_mode=(engine.mode == "paper"),
-        created_at=datetime.utcnow(),
-    )
+    # ── Risk validation ──────────────────────────────────────────────────
+    # Check max position size pct of portfolio
+    current_prices = engine.exchange_manager.get_current_prices()
+    portfolio_value = engine.paper_trader.get_portfolio_value(current_prices) if engine.mode == "paper" else 10000.0
+    max_pos = portfolio_value * (risk_mgr.max_position_pct / 100.0)
+    if amount_inr > max_pos:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Amount ₹{amount_inr:,.2f} exceeds max position size ₹{max_pos:,.2f} ({risk_mgr.max_position_pct}% of portfolio).",
+        )
 
-    # Optional stop-loss / take-profit from body
-    if hasattr(body, "stop_loss") and body.stop_loss is not None:
-        trade.stop_loss = body.stop_loss
-    if hasattr(body, "take_profit") and body.take_profit is not None:
-        trade.take_profit = body.take_profit
+    # Check max open trades
+    if risk_mgr.max_open_trades:
+        open_count = db.query(Trade).filter(Trade.status == "OPEN").count()
+        if open_count >= risk_mgr.max_open_trades:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Max open trades ({risk_mgr.max_open_trades}) reached. Close a trade first.",
+            )
 
-    db.add(trade)
-    db.commit()
-    db.refresh(trade)
+    # ── Execute the trade ────────────────────────────────────────────────
+    try:
+        strategy_name = body.strategy.upper() if body.strategy else "MANUAL"
+        if engine.mode == "paper":
+            result = engine.paper_trader.execute_trade(
+                pair=body.pair.upper(),
+                side=body.side.upper(),
+                quantity=quantity,
+                price=current_price,
+                strategy=strategy_name,
+                stop_loss=body.stop_loss,
+                take_profit=body.take_profit,
+                entry_reason="Manual trade placed by user",
+            )
+            if isinstance(result, dict) and "error" in result:
+                raise HTTPException(status_code=400, detail=result["error"])
+            trade = db.query(Trade).filter(Trade.id == result["id"]).first()
+        else:
+            # Live Mode
+            result = engine.exchange_manager.place_order(
+                pair=body.pair.upper(),
+                side=body.side.upper(),
+                quantity=quantity,
+                price=current_price,
+                order_type="LIMIT",
+            )
+            trade = Trade(
+                pair=body.pair.upper(),
+                strategy=strategy_name,
+                side=body.side.upper(),
+                entry_price=current_price,
+                quantity=quantity,
+                status="OPEN",
+                paper_mode=False,
+                stop_loss=body.stop_loss,
+                take_profit=body.take_profit,
+                entry_reason="Manual trade placed by user",
+                created_at=datetime.utcnow(),
+            )
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise exc
+        raise HTTPException(status_code=500, detail=f"Trade execution failed: {exc}") from exc
 
     return trade
 
@@ -169,37 +213,55 @@ async def close_trade(
     if trade.status != "OPEN":
         raise HTTPException(status_code=400, detail=f"Trade {trade_id} is already {trade.status}.")
 
-    # ── Fetch exit price ─────────────────────────────────────────────────
     engine = request.app.state.engine
     try:
-        ticker = engine.exchange_manager.fetch_ticker(trade.pair)
-        exit_price = float(ticker.get("last", 0)) if isinstance(ticker, dict) else float(ticker)
+        # Close via engine which handles paper trader and exchanges properly
+        engine.close_trade(trade_id, "MANUAL")
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Could not fetch exit price: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Failed to close trade: {exc}") from exc
 
-    if exit_price <= 0:
-        raise HTTPException(status_code=502, detail="Invalid exit price received.")
-
-    # ── PnL calculation ──────────────────────────────────────────────────
-    if trade.side == "BUY":
-        pnl = (exit_price - trade.entry_price) * trade.quantity
-    else:
-        pnl = (trade.entry_price - exit_price) * trade.quantity
-
-    pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price * 100) if trade.entry_price else 0.0
-    if trade.side == "SELL":
-        pnl_pct = -pnl_pct
-
-    trade.exit_price = exit_price
-    trade.pnl = round(pnl, 2)
-    trade.pnl_pct = round(pnl_pct, 2)
-    trade.status = "CLOSED"
-    trade.closed_at = datetime.utcnow()
-
-    db.commit()
     db.refresh(trade)
-
     return trade
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# POST /api/trades/close-all
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.post("/api/trades/close-all", summary="Emergency exit: Close all open trades")
+async def close_all_trades(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Emergency exit: Closes all open trades immediately.
+    """
+    open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+    if not open_trades:
+        return {"message": "No open trades to close.", "closed_count": 0}
+
+    engine = request.app.state.engine
+    closed_ids = []
+    errors = []
+
+    for trade in open_trades:
+        try:
+            engine.close_trade(trade.id, "EMERGENCY_EXIT")
+            closed_ids.append(trade.id)
+        except Exception as e:
+            errors.append(f"Trade {trade.id}: {e}")
+
+    if errors:
+        raise HTTPException(
+            status_code=500,
+            detail={"message": f"Closed {len(closed_ids)} trades, but failed on some.", "errors": errors}
+        )
+
+    return {
+        "message": f"Successfully closed all {len(closed_ids)} open trades.",
+        "closed_count": len(closed_ids),
+        "closed_ids": closed_ids
+    }
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

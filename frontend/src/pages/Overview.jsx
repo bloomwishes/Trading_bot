@@ -89,7 +89,7 @@ function ChartTooltip({ active, payload }) {
 }
 
 export default function Overview() {
-  const { status, refetchStatus } = useOutletContext();
+  const { status, portfolio, refetchStatus } = useOutletContext();
   const [snapshots, setSnapshots] = useState([]);
   const [opportunities, setOpportunities] = useState([]);
   const [actionLoading, setActionLoading] = useState(false);
@@ -140,7 +140,7 @@ export default function Overview() {
   };
 
   // Derived values from backend API response
-  const portfolioValue = status?.portfolio?.total_value_inr || 0;
+  const portfolioValue = portfolio?.total_value_inr || status?.portfolio?.total_value_inr || 0;
   const todayPnl = status?.portfolio?.today_pnl || 0;
   const todayPnlPct = status?.portfolio?.today_pnl_pct || 0;
   const activeTrades = status?.portfolio?.active_trades || 0;

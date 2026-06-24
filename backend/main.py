@@ -33,6 +33,7 @@ from backend.api.portfolio import router as portfolio_router
 from backend.api.llm import router as llm_router
 from backend.api.websockets import router as ws_router
 from backend.api.market import router as market_router
+from backend.api.diagnostics import router as diagnostics_router
 
 logger = logging.getLogger("autotrader.main")
 
@@ -120,6 +121,7 @@ app.include_router(portfolio_router)
 app.include_router(llm_router)
 app.include_router(ws_router)
 app.include_router(market_router)
+app.include_router(diagnostics_router)
 
 
 # ── Root Health-check ────────────────────────────────────────────────────────

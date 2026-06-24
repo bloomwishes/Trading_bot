@@ -28,10 +28,18 @@ if exist "%SCRIPT_DIR%venv\Scripts\activate.bat" (
 REM Create logs directory
 if not exist "%SCRIPT_DIR%logs" mkdir "%SCRIPT_DIR%logs"
 
+REM Show what python/node resolve to right now, for debugging double-click vs
+REM manual-terminal PATH mismatches. This gets written to logs\launch_debug.log
+echo ---- LAUNCH DEBUG %DATE% %TIME% ---- > "%SCRIPT_DIR%logs\launch_debug.log"
+echo PATH=%PATH% >> "%SCRIPT_DIR%logs\launch_debug.log"
+where python >> "%SCRIPT_DIR%logs\launch_debug.log" 2>&1
+where node >> "%SCRIPT_DIR%logs\launch_debug.log" 2>&1
+where npm >> "%SCRIPT_DIR%logs\launch_debug.log" 2>&1
+
 REM Start Backend
 echo [1/2] Starting backend API server...
 set "PYTHONPATH=%SCRIPT_DIR%"
-start "AutoTrader-Backend" cmd /k "cd /d %SCRIPT_DIR% && set PYTHONPATH=%SCRIPT_DIR% && call venv\Scripts\activate.bat && python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
+start "AutoTrader-Backend" cmd /k "cd /d %SCRIPT_DIR% && set PYTHONPATH=%SCRIPT_DIR% && python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload || (echo. & echo [BACKEND CRASHED - see error above] & pause)"
 echo [OK] Backend starting on http://localhost:8000
 
 REM Wait for backend
@@ -40,7 +48,7 @@ timeout /t 4 /nobreak >nul
 
 REM Start Frontend
 echo [2/2] Starting frontend dashboard...
-start "AutoTrader-Frontend" cmd /k "cd /d %SCRIPT_DIR%frontend && npm run dev -- --host"
+start "AutoTrader-Frontend" cmd /k "cd /d %SCRIPT_DIR%frontend && npm run dev -- --host || (echo. & echo [FRONTEND CRASHED - see error above] & pause)"
 echo [OK] Frontend starting on http://localhost:3000
 
 echo.

@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { History, Download, Filter, Calendar, TrendingUp, TrendingDown, Award, BarChart3 } from 'lucide-react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
+import { History, Download, Filter, Calendar, TrendingUp, TrendingDown, Award, BarChart3, ChevronDown, ChevronUp } from 'lucide-react';
 import { getTradeHistory, exportTrades } from '../utils/api';
 import { formatINR, formatPercent, formatDate } from '../utils/formatters';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -7,6 +7,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 export default function TradeHistory() {
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandedRow, setExpandedRow] = useState(null);
   const [filters, setFilters] = useState({
     pair: '',
     strategy: '',
@@ -360,38 +361,74 @@ export default function TradeHistory() {
                   <th className="text-right p-3 text-xs font-medium text-gray-500 uppercase">Qty</th>
                   <th className="text-right p-3 text-xs font-medium text-gray-500 uppercase">P&L</th>
                   <th className="text-center p-3 text-xs font-medium text-gray-500 uppercase">Mode</th>
+                  <th className="text-center p-3 text-xs font-medium text-gray-500 uppercase">Details</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-cyber-surface/30">
-                {trades.map(trade => (
-                  <tr key={trade.id} className="hover:bg-cyber-surface/20 transition-colors">
-                    <td className="p-3 text-sm text-gray-400">{formatDate(trade.closed_at || trade.created_at)}</td>
-                    <td className="p-3 text-sm font-semibold text-white">{trade.pair}</td>
-                    <td className="p-3">
-                      <span className="text-xs px-2 py-0.5 rounded bg-cyber-surface text-gray-300">{trade.strategy}</span>
-                    </td>
-                    <td className="p-3">
-                      <span className={`text-sm font-semibold ${trade.side === 'BUY' ? 'text-neon-green' : 'text-neon-red'}`}>
-                        {trade.side}
-                      </span>
-                    </td>
-                    <td className="p-3 text-right text-sm text-gray-300 font-mono">{formatINR(trade.entry_price)}</td>
-                    <td className="p-3 text-right text-sm text-gray-300 font-mono">{formatINR(trade.exit_price)}</td>
-                    <td className="p-3 text-right text-sm text-gray-400 font-mono">{trade.quantity?.toFixed(6)}</td>
-                    <td className="p-3 text-right">
-                      <span className={`text-sm font-bold font-mono ${(trade.pnl || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
-                        {(trade.pnl || 0) >= 0 ? '+' : ''}{formatINR(trade.pnl || 0)}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center">
-                      <span className={`text-xs px-2 py-0.5 rounded-full ${trade.paper_mode 
-                        ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/20' 
-                        : 'bg-neon-magenta/10 text-neon-magenta border border-neon-magenta/20'}`}>
-                        {trade.paper_mode ? 'Paper' : 'Live'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {trades.map(trade => {
+                  const isExpanded = expandedRow === trade.id;
+                  return (
+                    <Fragment key={trade.id}>
+                      <tr 
+                        className="hover:bg-cyber-surface/20 transition-colors cursor-pointer"
+                        onClick={() => setExpandedRow(isExpanded ? null : trade.id)}
+                      >
+                        <td className="p-3 text-sm text-gray-400">{formatDate(trade.closed_at || trade.created_at)}</td>
+                        <td className="p-3 text-sm font-semibold text-white">{trade.pair}</td>
+                        <td className="p-3">
+                          <span className="text-xs px-2 py-0.5 rounded bg-cyber-surface text-gray-300">{trade.strategy}</span>
+                        </td>
+                        <td className="p-3">
+                          <span className={`text-sm font-semibold ${trade.side === 'BUY' ? 'text-neon-green' : 'text-neon-red'}`}>
+                            {trade.side}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right text-sm text-gray-300 font-mono">{formatINR(trade.entry_price)}</td>
+                        <td className="p-3 text-right text-sm text-gray-300 font-mono">{formatINR(trade.exit_price)}</td>
+                        <td className="p-3 text-right text-sm text-gray-400 font-mono">{trade.quantity?.toFixed(6)}</td>
+                        <td className="p-3 text-right">
+                          <span className={`text-sm font-bold font-mono ${(trade.pnl || 0) >= 0 ? 'text-neon-green' : 'text-neon-red'}`}>
+                            {(trade.pnl || 0) >= 0 ? '+' : ''}{formatINR(trade.pnl || 0)}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${trade.paper_mode 
+                            ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/20' 
+                            : 'bg-neon-magenta/10 text-neon-magenta border border-neon-magenta/20'}`}>
+                            {trade.paper_mode ? 'Paper' : 'Live'}
+                          </span>
+                        </td>
+                        <td className="p-3 text-center">
+                          {isExpanded ? (
+                            <ChevronUp size={16} className="mx-auto text-neon-cyan" />
+                          ) : (
+                            <ChevronDown size={16} className="mx-auto text-gray-500" />
+                          )}
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="bg-cyber-surface/10">
+                          <td colSpan="10" className="p-4 border-t border-b border-cyber-surface/20">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-slide-in">
+                              <div>
+                                <h4 className="text-xs text-neon-cyan uppercase font-bold mb-1 tracking-wider">Entry Reason</h4>
+                                <p className="text-sm text-gray-300 bg-cyber-bg/40 p-3 rounded border border-gray-800/50">
+                                  {trade.entry_reason || 'Manual execution or standard indicator trigger.'}
+                                </p>
+                              </div>
+                              <div>
+                                <h4 className="text-xs text-neon-red uppercase font-bold mb-1 tracking-wider">Exit Reason</h4>
+                                <p className="text-sm text-gray-300 bg-cyber-bg/40 p-3 rounded border border-gray-800/50">
+                                  {trade.exit_reason || 'Target achieved or exit signal triggered.'}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

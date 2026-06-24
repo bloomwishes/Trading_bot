@@ -309,12 +309,7 @@ class OpportunityScanner:
                 db_opp = Opportunity(
                     pair=opp["pair"],
                     score=opp["score"],
-                    rsi=opp.get("rsi", 0),
-                    volume_ratio=opp.get("volume_ratio", 0),
-                    momentum_pct=opp.get("momentum_pct", 0),
-                    bandwidth=opp.get("bandwidth", 0),
-                    recommendation=opp.get("recommendation", "WATCH"),
-                    details_json=json.dumps(opp),
+                    scanner_data=json.dumps(opp, default=str),
                     created_at=opp.get("timestamp", timestamp_now()),
                 )
                 db.add(db_opp)
@@ -353,7 +348,7 @@ class OpportunityScanner:
             results = []
             for row in rows:
                 try:
-                    details = json.loads(row.details_json) if row.details_json else {}
+                    details = json.loads(row.scanner_data) if getattr(row, "scanner_data", None) else {}
                 except (json.JSONDecodeError, TypeError):
                     details = {}
                 results.append(
@@ -361,11 +356,11 @@ class OpportunityScanner:
                         "id": row.id,
                         "pair": row.pair,
                         "score": row.score,
-                        "rsi": row.rsi,
-                        "volume_ratio": row.volume_ratio,
-                        "momentum_pct": row.momentum_pct,
-                        "bandwidth": row.bandwidth,
-                        "recommendation": row.recommendation,
+                        "rsi": details.get("rsi", 0),
+                        "volume_ratio": details.get("volume_ratio", 0),
+                        "momentum_pct": details.get("momentum_pct", 0),
+                        "bandwidth": details.get("bandwidth", 0),
+                        "recommendation": details.get("recommendation", "WATCH"),
                         "details": details,
                         "created_at": str(row.created_at),
                     }
