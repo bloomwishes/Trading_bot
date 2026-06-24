@@ -41,7 +41,7 @@ export default function PaperLiveToggle({ mode = 'paper', onToggle, disabled = f
           className={`absolute top-1 h-[calc(100%-8px)] w-[64px] rounded-full transition-all duration-300 ease-in-out ${
             isPaper
               ? 'left-1 bg-neon-cyan/20 shadow-[0_0_12px_rgba(0,240,255,0.3)]'
-              : 'left-[calc(100%-68px)] bg-neon-red/20 shadow-[0_0_12px_rgba(255,51,102,0.3)]'
+              : 'left-[calc(100%-68px)] bg-neon-red/20 shadow-[0_0_12px_rgba(251,113,133,0.3)]'
           }`}
         />
 

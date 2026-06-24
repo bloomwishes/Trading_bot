@@ -99,8 +99,8 @@ export default function TradeHistory() {
 
   // Pie chart data
   const pieData = useMemo(() => [
-    { name: 'Wins', value: stats.wins, color: '#00ff88' },
-    { name: 'Losses', value: stats.losses, color: '#ff3366' },
+    { name: 'Wins', value: stats.wins, color: '#34d399' },
+    { name: 'Losses', value: stats.losses, color: '#fb7185' },
   ], [stats]);
 
   const pairs = [...new Set(trades.map(t => t.pair))];
@@ -271,10 +271,10 @@ export default function TradeHistory() {
                   <Line
                     type="monotone"
                     dataKey="pnl"
-                    stroke="#00f0ff"
+                    stroke="#22d3ee"
                     strokeWidth={2}
                     dot={false}
-                    activeDot={{ r: 4, fill: '#00f0ff', stroke: '#0a0a0f', strokeWidth: 2 }}
+                    activeDot={{ r: 4, fill: '#22d3ee', stroke: '#0b0e14', strokeWidth: 2 }}
                     filter="drop-shadow(0 0 6px rgba(0, 240, 255, 0.5))"
                   />
                 </LineChart>

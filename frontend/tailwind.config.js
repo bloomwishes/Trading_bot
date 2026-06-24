@@ -4,19 +4,27 @@ export default {
   theme: {
     extend: {
       colors: {
-        'cyber-bg': '#0a0a0f',
-        'cyber-surface': '#1a1a2e',
-        'cyber-card': '#16213e',
-        'neon-cyan': '#00f0ff',
-        'neon-magenta': '#ff00e5',
-        'neon-green': '#00ff88',
-        'neon-yellow': '#ffd600',
-        'neon-red': '#ff3366',
+        'cyber-bg': '#0b0e14',
+        'cyber-surface': '#141925',
+        'cyber-card': '#161c2c',
+        'cyber-border': '#232a3d',
+        'neon-cyan': '#22d3ee',
+        'neon-magenta': '#c084fc',
+        'neon-green': '#34d399',
+        'neon-yellow': '#fbbf24',
+        'neon-red': '#fb7185',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
-        heading: ['Rajdhani', 'Inter', 'sans-serif'],
+        heading: ['Inter', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'Fira Code', 'Consolas', 'monospace'],
+      },
+      transitionTimingFunction: {
+        fluid: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      },
+      boxShadow: {
+        'soft': '0 4px 24px -4px rgba(0,0,0,0.4)',
+        'soft-lg': '0 12px 40px -8px rgba(0,0,0,0.5)',
       },
       animation: {
         'pulse-glow': 'pulse-glow 2s ease-in-out infinite',

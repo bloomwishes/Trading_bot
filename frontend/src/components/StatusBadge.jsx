@@ -3,28 +3,28 @@ import React from 'react';
 const statusConfig = {
   running: {
     color: 'bg-neon-green',
-    glow: 'shadow-[0_0_10px_rgba(0,255,136,0.6)]',
+    glow: 'shadow-[0_0_10px_rgba(52,211,153,0.6)]',
     ringColor: 'pulse-dot-green',
     label: 'Running',
     textColor: 'text-neon-green',
   },
   paused: {
     color: 'bg-neon-yellow',
-    glow: 'shadow-[0_0_10px_rgba(255,214,0,0.6)]',
+    glow: 'shadow-[0_0_10px_rgba(251,191,36,0.6)]',
     ringColor: 'pulse-dot-yellow',
     label: 'Paused',
     textColor: 'text-neon-yellow',
   },
   stopped: {
     color: 'bg-neon-red',
-    glow: 'shadow-[0_0_10px_rgba(255,51,102,0.6)]',
+    glow: 'shadow-[0_0_10px_rgba(251,113,133,0.6)]',
     ringColor: '',
     label: 'Stopped',
     textColor: 'text-neon-red',
   },
   error: {
     color: 'bg-neon-red',
-    glow: 'shadow-[0_0_10px_rgba(255,51,102,0.6)]',
+    glow: 'shadow-[0_0_10px_rgba(251,113,133,0.6)]',
     ringColor: 'pulse-dot-red',
     label: 'Error',
     textColor: 'text-neon-red',
