@@ -66,7 +66,7 @@ async def get_trade_history(
     pair: Optional[str] = Query(None, description="Trading pair, e.g. BTC/INR"),
     strategy: Optional[str] = Query(None, description="Strategy name filter"),
     paper_mode: Optional[bool] = Query(None, description="Filter by paper_mode flag"),
-    limit: int = Query(50, ge=1, le=500, description="Page size"),
+    limit: int = Query(500, ge=1, le=5000, description="Page size"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     db: Session = Depends(get_db),
 ) -> list[Trade]:
@@ -83,7 +83,7 @@ async def get_trade_history(
     if paper_mode is not None:
         query = query.filter(Trade.paper_mode == paper_mode)
 
-    return query.order_by(desc(Trade.closed_at)).offset(offset).limit(limit).all()
+    return query.order_by(desc(Trade.closed_at), desc(Trade.id)).offset(offset).limit(limit).all()
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

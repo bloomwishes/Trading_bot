@@ -106,6 +106,14 @@ export default function TradeHistory() {
   const pairs = [...new Set(trades.map(t => t.pair))];
   const strategies = [...new Set(trades.map(t => t.strategy))];
 
+  const sortedTrades = useMemo(() => {
+    return [...trades].sort((a, b) => {
+      const dateA = new Date(a.closed_at || a.created_at);
+      const dateB = new Date(b.closed_at || b.created_at);
+      return dateB - dateA; // newest first
+    });
+  }, [trades]);
+
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
       return (
@@ -365,7 +373,7 @@ export default function TradeHistory() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-cyber-surface/30">
-                {trades.map(trade => {
+                {sortedTrades.map(trade => {
                   const isExpanded = expandedRow === trade.id;
                   return (
                     <Fragment key={trade.id}>
