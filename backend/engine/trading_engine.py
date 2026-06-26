@@ -32,6 +32,7 @@ from backend.engine.breakout_hunter import BreakoutHunterStrategy
 from backend.engine.rsi_divergence import RSIDivergenceStrategy
 from backend.engine.sentiment_llm import SentimentLLMStrategy
 from backend.engine.grid_trading import GridTradingStrategy
+from backend.engine.price_action import PriceActionStrategy
 
 
 class TradingEngine:
@@ -78,6 +79,7 @@ class TradingEngine:
             RSIDivergenceStrategy(),
             SentimentLLMStrategy(),
             GridTradingStrategy(),
+            PriceActionStrategy(),
         ]
 
         # -- Cycle stats --

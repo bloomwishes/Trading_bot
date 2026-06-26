@@ -24,7 +24,7 @@ export default function TradeHistory() {
   const fetchHistory = async () => {
     setLoading(true);
     try {
-      const params = {};
+      const params = { limit: 500 };
       if (filters.pair) params.pair = filters.pair;
       if (filters.strategy) params.strategy = filters.strategy;
       if (filters.paper_mode !== '') params.paper_mode = filters.paper_mode === 'true';
@@ -85,7 +85,7 @@ export default function TradeHistory() {
   // Cumulative P&L chart data
   const chartData = useMemo(() => {
     let cumPnl = 0;
-    return trades
+    return [...trades]
       .sort((a, b) => new Date(a.closed_at || a.created_at) - new Date(b.closed_at || b.created_at))
       .map((t, i) => {
         cumPnl += (t.pnl || 0);
