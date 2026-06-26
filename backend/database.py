@@ -4,6 +4,7 @@ SQLAlchemy engine, session factory, declarative base, and FastAPI dependency.
 """
 
 from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from typing import Generator
 
@@ -18,7 +19,7 @@ engine = create_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False},  # required for SQLite + threads
     echo=False,
-    pool_pre_ping=True,
+    poolclass=NullPool,
 )
 
 # ---------------------------------------------------------------------------

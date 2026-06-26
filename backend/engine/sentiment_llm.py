@@ -242,8 +242,8 @@ class SentimentLLMStrategy(StrategyBase):
         reason: Optional[str],
     ):
         """Persist the LLM decision to the database."""
+        db = SessionLocal()
         try:
-            db = SessionLocal()
             decision = LLMDecision(
                 pair=pair,
                 prompt=prompt,
@@ -255,11 +255,13 @@ class SentimentLLMStrategy(StrategyBase):
             )
             db.add(decision)
             db.commit()
-            db.close()
         except Exception as e:
+            db.rollback()
             bot_logger.error(
                 f"[Sentiment_LLM] Failed to save LLM decision to DB: {e}"
             )
+        finally:
+            db.close()
 
     # ------------------------------------------------------------------
     # Main analysis
