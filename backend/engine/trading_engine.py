@@ -208,6 +208,22 @@ class TradingEngine:
 
         # -- Risk checks --
         if action == "BUY":
+            # Check for existing open trade with same pair and strategy to prevent duplicates
+            existing_trade = (
+                db.query(Trade)
+                .filter(
+                    Trade.status == "OPEN",
+                    Trade.pair == pair,
+                    Trade.strategy == signal.strategy,
+                )
+                .first()
+            )
+            if existing_trade:
+                bot_logger.info(
+                    f"[Engine] Ignored duplicate BUY signal for {pair} using strategy {signal.strategy} (Trade #{existing_trade.id} is already open)"
+                )
+                return None
+
             num_open_trades = (
                 db.query(Trade).filter(Trade.status == "OPEN").count()
             )
