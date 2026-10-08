@@ -71,4 +71,10 @@ export const getAIAnalysis = (symbols) => api.get('/market/analyze', { params: {
 // ==========================================
 export const getDiagnostics = () => api.get('/diagnostics');
 
+// ==========================================
+// NEURAL NETWORK (SHADOW MODE)
+// ==========================================
+export const getNeuralNetworkTelemetry = (limit = 50) => api.get('/strategies/shadow/predictions', { params: { limit } });
+export const trainNeuralNetwork = (pair = 'BTC/INR') => api.post('/strategies/neural_network/train', { pair });
+
 export default api;
