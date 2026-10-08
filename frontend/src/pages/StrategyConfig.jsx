@@ -10,6 +10,7 @@ const strategyDescriptions = {
   'rsi_divergence': 'Identifies bullish/bearish divergence between price action and RSI on 15m and 1h timeframes.',
   'sentiment_llm': 'AI-powered analysis using local Ollama LLM. Evaluates market data and provides high-confidence signals.',
   'grid_trading': 'Places automated buy/sell grid orders around current price. Auto-rebalances when price exits range.',
+  'neural_network': 'Deep Neural Network (16→64→32→DualHead) running in Shadow Mode. Predicts directional probabilities & expected returns without executing trades.',
 };
 
 const strategyIcons = {
@@ -19,6 +20,7 @@ const strategyIcons = {
   'rsi_divergence': '🔀',
   'sentiment_llm': '🧠',
   'grid_trading': '📊',
+  'neural_network': '🤖',
 };
 
 const paramLabels = {
@@ -50,6 +52,12 @@ const paramLabels = {
   num_levels: 'Grid Levels',
   capital_per_grid: 'Capital Per Grid (₹)',
   rebalance_threshold_pct: 'Rebalance Threshold %',
+  shadow_mode: 'Shadow Mode (Log Only)',
+  horizon_bars: 'Prediction Horizon (Bars)',
+  return_threshold_pct: 'Return Threshold %',
+  learning_rate: 'Learning Rate',
+  train_epochs: 'Training Epochs',
+  auto_train: 'Auto-Calibrate Weights',
 };
 
 export default function StrategyConfig() {
@@ -201,6 +209,11 @@ export default function StrategyConfig() {
                   <span className={`text-xs font-medium ${strategy.enabled ? 'text-neon-green' : 'text-gray-600'}`}>
                     {strategy.enabled ? 'Active' : 'Disabled'}
                   </span>
+                  {strategy.params?.shadow_mode && (
+                    <span className="ml-auto text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      🛡️ Shadow Mode (0 Trade Risk)
+                    </span>
+                  )}
                 </div>
               </div>
 

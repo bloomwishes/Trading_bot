@@ -33,6 +33,7 @@ from backend.engine.rsi_divergence import RSIDivergenceStrategy
 from backend.engine.sentiment_llm import SentimentLLMStrategy
 from backend.engine.grid_trading import GridTradingStrategy
 from backend.engine.price_action import PriceActionStrategy
+from backend.engine.neural_net_strategy import NeuralNetworkStrategy
 
 
 class TradingEngine:
@@ -80,6 +81,7 @@ class TradingEngine:
             SentimentLLMStrategy(),
             GridTradingStrategy(),
             PriceActionStrategy(),
+            NeuralNetworkStrategy(),
         ]
 
         # -- Cycle stats --
@@ -205,6 +207,26 @@ class TradingEngine:
 
         # -- Persist the signal first --
         self._save_signal(signal, db)
+
+        # -- Shadow Mode Guard --
+        # When a strategy runs in shadow mode, signals are recorded and logged for
+        # telemetry and performance analysis, but execution is strictly bypassed.
+        if bool(signal.metadata and signal.metadata.get("shadow_mode")):
+            bot_logger.info(
+                f"[Engine] [SHADOW MODE] {signal.strategy} {action} signal on {pair} "
+                f"(confidence={signal.strength:.2f}) recorded to DB — trade execution bypassed."
+            )
+            return {
+                "pair": pair,
+                "action": action,
+                "strategy": signal.strategy,
+                "strength": signal.strength,
+                "shadow_mode": True,
+                "executed": False,
+                "reason": signal.reason,
+                "metadata": signal.metadata,
+                "timestamp": timestamp_now(),
+            }
 
         # -- Risk checks --
         if action == "BUY":

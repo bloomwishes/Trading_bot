@@ -96,3 +96,92 @@ async def update_strategy(
         "message": f"Strategy '{name}' updated.",
         "strategy": {name: updated_configs.get(name)},
     }
+
+
+@router.get("/shadow/predictions", summary="Get Neural Network shadow mode predictions and telemetry")
+async def get_shadow_predictions(request: Request, limit: int = 50) -> dict[str, Any]:
+    """
+    Returns shadow-mode telemetry from the Neural Network strategy along with
+    persisted shadow signals from the database.
+    """
+    import json
+    from backend.database import SessionLocal
+    from backend.models import Signal
+
+    engine = request.app.state.engine
+    nn_strategy = next(
+        (s for s in engine.strategies if s.name == "Neural_Network"), None
+    )
+
+    stats = nn_strategy.get_shadow_stats() if nn_strategy else {}
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Signal)
+            .filter(Signal.strategy == "Neural_Network")
+            .order_by(Signal.id.desc())
+            .limit(max(1, min(limit, 500)))
+            .all()
+        )
+        db_signals = []
+        for r in rows:
+            try:
+                meta = json.loads(r.metadata_json) if r.metadata_json else {}
+            except Exception:
+                meta = {}
+            db_signals.append(
+                {
+                    "id": r.id,
+                    "pair": r.pair,
+                    "action": r.signal_type,
+                    "strategy": r.strategy,
+                    "strength": r.strength,
+                    "metadata": meta,
+                    "created_at": (
+                        r.created_at.isoformat()
+                        if hasattr(r.created_at, "isoformat")
+                        else str(r.created_at)
+                    ),
+                }
+            )
+    finally:
+        db.close()
+
+    return {
+        "shadow_telemetry": stats,
+        "persisted_signals": db_signals,
+    }
+
+
+class NeuralTrainRequest(BaseModel):
+    pair: str = Field("BTC/INR", description="Trading pair to fetch candles and calibrate on")
+
+
+@router.post("/neural_network/train", summary="Calibrate Neural Network on historical candles")
+async def train_neural_network(
+    request: Request,
+    body: Optional[NeuralTrainRequest] = None,
+) -> dict[str, Any]:
+    """
+    Fetches historical candles for the specified pair and calibrates the
+    Shadow Mode Neural Network weights.
+    """
+    engine = request.app.state.engine
+    nn_strategy = next(
+        (s for s in engine.strategies if s.name == "Neural_Network"), None
+    )
+    if nn_strategy is None:
+        raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
+
+    pair = body.pair if body else "BTC/INR"
+    df = engine.exchange_manager.get_candles(pair=pair, interval="15m", limit=120)
+    if df is None or df.empty:
+        raise HTTPException(status_code=400, detail=f"No candle data available for {pair}")
+
+    metrics = nn_strategy.train_on_candles(df, pair=pair)
+    return {
+        "message": f"Neural network calibrated on {pair} (shadow_mode={nn_strategy.params.get('shadow_mode', True)})",
+        "metrics": metrics,
+    }
+
