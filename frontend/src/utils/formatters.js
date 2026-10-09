@@ -44,14 +44,40 @@ export function formatPercent(value) {
 }
 
 /**
+ * Safely parse date inputs (handles ISO without timezone, space-separated SQLite datetimes, etc.)
+ * Always interprets naive backend timestamps as UTC so local time (e.g. IST) displays accurately.
+ * @param {string|Date|number} date
+ * @returns {Date|null}
+ */
+export function parseDate(date) {
+  if (!date) return null;
+  if (date instanceof Date) return isNaN(date.getTime()) ? null : date;
+  if (typeof date === 'number') {
+    const d = new Date(date);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof date === 'string') {
+    const trimmed = date.trim();
+    if (!trimmed) return null;
+    const hasTz = trimmed.endsWith('Z') || /[+-]\d{2}(:\d{2})?$/.test(trimmed);
+    const normalized = (trimmed.includes('T') || trimmed.includes(' ')) && !hasTz
+      ? trimmed.replace(' ', 'T') + 'Z'
+      : trimmed;
+    const d = new Date(normalized);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(date);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
  * Format a date string to readable format
  * @param {string|Date} date - Date to format
- * @returns {string} Formatted date e.g., 'Jun 16, 2026 12:30 PM'
+ * @returns {string} Formatted date e.g., 'Oct 10, 2026 4:52 AM'
  */
 export function formatDate(date) {
-  if (!date) return '—';
-  const d = new Date(date);
-  if (isNaN(d.getTime())) return '—';
+  const d = parseDate(date);
+  if (!d) return '—';
   return new Intl.DateTimeFormat('en-IN', {
     month: 'short',
     day: 'numeric',
@@ -68,9 +94,8 @@ export function formatDate(date) {
  * @returns {string}
  */
 export function formatShortDate(date) {
-  if (!date) return '—';
-  const d = new Date(date);
-  if (isNaN(d.getTime())) return '—';
+  const d = parseDate(date);
+  if (!d) return '—';
   return new Intl.DateTimeFormat('en-IN', {
     month: 'short',
     day: 'numeric',
@@ -84,9 +109,8 @@ export function formatShortDate(date) {
  * @returns {string}
  */
 export function formatTime(date) {
-  if (!date) return '—';
-  const d = new Date(date);
-  if (isNaN(d.getTime())) return '—';
+  const d = parseDate(date);
+  if (!d) return '—';
   return new Intl.DateTimeFormat('en-IN', {
     hour: 'numeric',
     minute: '2-digit',

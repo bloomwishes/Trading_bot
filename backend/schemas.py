@@ -8,7 +8,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
+
+
+def _format_datetime_utc(v: Optional[datetime]) -> Optional[str]:
+    """Ensure naive UTC datetimes are serialized with trailing 'Z' for accurate browser timezone conversion."""
+    if v is None:
+        return None
+    if v.tzinfo is None:
+        return v.isoformat() + "Z"
+    return v.isoformat()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -49,9 +58,13 @@ class TradeResponse(BaseModel):
     entry_reason: Optional[str] = None
     exit_reason: Optional[str] = None
 
+    @field_serializer("created_at", "closed_at")
+    def serialize_datetime(self, v: Optional[datetime]) -> Optional[str]:
+        return _format_datetime_utc(v)
+
     class Config:
         from_attributes = True          # Pydantic v2 (orm_mode equivalent)
-        json_encoders = {datetime: lambda v: v.isoformat()}
+        json_encoders = {datetime: _format_datetime_utc}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -66,9 +79,13 @@ class SignalResponse(BaseModel):
     metadata_json: Optional[str] = None
     created_at: datetime
 
+    @field_serializer("created_at")
+    def serialize_datetime(self, v: Optional[datetime]) -> Optional[str]:
+        return _format_datetime_utc(v)
+
     class Config:
         from_attributes = True
-        json_encoders = {datetime: lambda v: v.isoformat()}
+        json_encoders = {datetime: _format_datetime_utc}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -82,9 +99,13 @@ class OpportunityResponse(BaseModel):
     scanner_data: Optional[str] = None
     created_at: datetime
 
+    @field_serializer("created_at")
+    def serialize_datetime(self, v: Optional[datetime]) -> Optional[str]:
+        return _format_datetime_utc(v)
+
     class Config:
         from_attributes = True
-        json_encoders = {datetime: lambda v: v.isoformat()}
+        json_encoders = {datetime: _format_datetime_utc}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -98,9 +119,13 @@ class PortfolioSnapshotResponse(BaseModel):
     paper_mode: bool
     created_at: datetime
 
+    @field_serializer("created_at")
+    def serialize_datetime(self, v: Optional[datetime]) -> Optional[str]:
+        return _format_datetime_utc(v)
+
     class Config:
         from_attributes = True
-        json_encoders = {datetime: lambda v: v.isoformat()}
+        json_encoders = {datetime: _format_datetime_utc}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -117,9 +142,13 @@ class LLMDecisionResponse(BaseModel):
     acted_on: bool
     created_at: datetime
 
+    @field_serializer("created_at")
+    def serialize_datetime(self, v: Optional[datetime]) -> Optional[str]:
+        return _format_datetime_utc(v)
+
     class Config:
         from_attributes = True
-        json_encoders = {datetime: lambda v: v.isoformat()}
+        json_encoders = {datetime: _format_datetime_utc}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -131,9 +160,13 @@ class BotLogResponse(BaseModel):
     message: str
     created_at: datetime
 
+    @field_serializer("created_at")
+    def serialize_datetime(self, v: Optional[datetime]) -> Optional[str]:
+        return _format_datetime_utc(v)
+
     class Config:
         from_attributes = True
-        json_encoders = {datetime: lambda v: v.isoformat()}
+        json_encoders = {datetime: _format_datetime_utc}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -115,7 +115,11 @@ async def get_trade_history(
     if date_from is not None:
         query = query.filter(Trade.created_at >= date_from)
     if date_to is not None:
-        query = query.filter(Trade.created_at <= date_to)
+        if date_to.hour == 0 and date_to.minute == 0 and date_to.second == 0:
+            date_to_end = date_to.replace(hour=23, minute=59, second=59, microsecond=999999)
+        else:
+            date_to_end = date_to
+        query = query.filter(Trade.created_at <= date_to_end)
     if pair is not None:
         query = query.filter(Trade.pair == pair.upper())
     if strategy is not None:

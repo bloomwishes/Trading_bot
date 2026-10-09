@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { History, Download, Filter, Calendar, TrendingUp, TrendingDown, Award, BarChart3, ChevronDown, ChevronUp, Brain, Zap, CheckCircle2, Loader2 } from 'lucide-react';
 import { getTradeHistory, exportTrades, trainNeuralNetworkOnHistory } from '../utils/api';
-import { formatINR, formatPercent, formatDate } from '../utils/formatters';
+import { formatINR, formatPercent, formatDate, parseDate } from '../utils/formatters';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 export default function TradeHistory() {
@@ -74,7 +74,11 @@ export default function TradeHistory() {
 
   // Sort trades with newest on top (descending by closed_at or created_at)
   const displayTrades = useMemo(() => {
-    return [...trades].sort((a, b) => new Date(b.closed_at || b.created_at) - new Date(a.closed_at || a.created_at));
+    return [...trades].sort((a, b) => {
+      const da = parseDate(a.closed_at || a.created_at)?.getTime() || 0;
+      const db = parseDate(b.closed_at || b.created_at)?.getTime() || 0;
+      return db - da;
+    });
   }, [trades]);
 
   // Stats calculations
@@ -109,12 +113,17 @@ export default function TradeHistory() {
   const chartData = useMemo(() => {
     let cumPnl = 0;
     return [...trades]
-      .sort((a, b) => new Date(a.closed_at || a.created_at) - new Date(b.closed_at || b.created_at))
+      .sort((a, b) => {
+        const da = parseDate(a.closed_at || a.created_at)?.getTime() || 0;
+        const db = parseDate(b.closed_at || b.created_at)?.getTime() || 0;
+        return da - db;
+      })
       .map((t, i) => {
         cumPnl += (t.pnl || 0);
+        const parsed = parseDate(t.closed_at || t.created_at);
         return {
           index: i + 1,
-          date: new Date(t.closed_at || t.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }),
+          date: parsed ? parsed.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }) : '—',
           pnl: cumPnl,
         };
       });
