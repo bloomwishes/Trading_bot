@@ -209,9 +209,13 @@ export default function StrategyConfig() {
                   <span className={`text-xs font-medium ${strategy.enabled ? 'text-neon-green' : 'text-gray-600'}`}>
                     {strategy.enabled ? 'Active' : 'Disabled'}
                   </span>
-                  {strategy.params?.shadow_mode && (
-                    <span className="ml-auto text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                      🛡️ Shadow Mode (0 Trade Risk)
+                  {strategy.name === 'Neural_Network' && (
+                    <span className={`ml-auto text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
+                      strategy.params?.shadow_mode
+                        ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                        : 'bg-neon-green/20 text-neon-green border-neon-green/30'
+                    }`}>
+                      {strategy.params?.shadow_mode ? '🛡️ Shadow Mode (0 Risk)' : '⚡ Active Trade Signals (ATR Guard)'}
                     </span>
                   )}
                 </div>

@@ -8,6 +8,7 @@ import Scanner from './pages/Scanner';
 import StrategyConfig from './pages/StrategyConfig';
 import RiskSettings from './pages/RiskSettings';
 import LLMDecisions from './pages/LLMDecisions';
+import NeuralBrain from './pages/NeuralBrain';
 import BotLogs from './pages/BotLogs';
 
 import Diagnostics from './pages/Diagnostics';
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="strategies" element={<StrategyConfig />} />
         <Route path="risk" element={<RiskSettings />} />
         <Route path="llm" element={<LLMDecisions />} />
+        <Route path="neural" element={<NeuralBrain />} />
         <Route path="diagnostics" element={<Diagnostics />} />
         <Route path="logs" element={<BotLogs />} />
       </Route>

@@ -266,9 +266,11 @@ class TradingEngine:
                 entry_price=current_price, side="BUY"
             )
 
-            # Use signal metadata stop loss if provided (e.g. from Breakout Hunter)
+            # Use signal metadata stop loss & take profit if provided (e.g. from Neural Network or Breakout Hunter)
             if signal.metadata and "stop_loss_price" in signal.metadata:
                 stop_loss = signal.metadata["stop_loss_price"]
+            if signal.metadata and "take_profit_price" in signal.metadata:
+                take_profit = signal.metadata["take_profit_price"]
 
             if position_size <= 0:
                 bot_logger.warning(
@@ -493,6 +495,16 @@ class TradingEngine:
             f"{trade.pair} entry=₹{entry_price:.2f} exit=₹{exit_price:.2f} "
             f"P&L=₹{pnl:.2f} ({pnl_pct:+.2f}%)"
         )
+
+        # Self-learning reinforcement: Neural network adapts its weights based on trade outcome
+        if trade.strategy == "Neural_Network":
+            for s in self.strategies:
+                if s.name == "Neural_Network" and hasattr(s, "learn_from_trade"):
+                    try:
+                        s.learn_from_trade(trade, pnl_pct)
+                    except Exception as exc:
+                        bot_logger.error(f"[Engine] Neural Net reinforcement error: {exc}")
+                    break
 
     def close_trade(self, trade_id: int, reason: str = "MANUAL"):
         """

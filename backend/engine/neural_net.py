@@ -345,6 +345,149 @@ class DeepTradingNN:
             },
         }
 
+    def predict_with_activations(self, feature_row: np.ndarray) -> Dict[str, Any]:
+        """
+        Run forward inference and extract full layer activations and firing synapses
+        for real-time visual neural brain rendering.
+        """
+        x = feature_row.reshape(1, -1)
+        probs, pred_ret, cache = self.forward(x)
+        p = probs[0]
+        cls_idx = int(np.argmax(p))
+        label = CLASS_LABELS[cls_idx]
+        confidence = float(p[cls_idx])
+        expected_return = float(pred_ret[0, 0])
+
+        x_norm = cache["X_norm"][0]
+        a1 = cache["a1"][0]
+        a2 = cache["a2"][0]
+
+        # Normalize activations for visualization (0.0 to 1.0 glow range)
+        a1_max = float(np.max(np.abs(a1))) if np.max(np.abs(a1)) > 0 else 1.0
+        a2_max = float(np.max(np.abs(a2))) if np.max(np.abs(a2)) > 0 else 1.0
+        a1_norm = [round(float(max(0.0, val / a1_max)), 4) for val in a1]
+        a2_norm = [round(float(max(0.0, val / a2_max)), 4) for val in a2]
+
+        # Extract top 15 firing synapses between L1 and L2 for animated visual pulse lines
+        synapses = []
+        try:
+            # Active weights: a1 * W2 * a2
+            weight_flow = np.abs(a1[:, None] * self.W2 * a2[None, :])
+            flat_indices = np.argsort(weight_flow.ravel())[-15:]
+            for idx in flat_indices:
+                src, dst = np.unravel_index(idx, weight_flow.shape)
+                strength = float(weight_flow[src, dst])
+                synapses.append({"from": int(src), "to": int(dst), "strength": round(strength, 3)})
+        except Exception:
+            synapses = []
+
+        return {
+            "action": label,
+            "confidence": round(confidence, 4),
+            "expected_return_pct": round(expected_return, 4),
+            "probabilities": {
+                "HOLD": round(float(p[0]), 4),
+                "BUY": round(float(p[1]), 4),
+                "SELL": round(float(p[2]), 4),
+            },
+            "input_features": [
+                {
+                    "name": FEATURE_NAMES[i],
+                    "norm_value": round(float(x_norm[i]), 3),
+                    "raw_value": round(float(feature_row[i]), 4),
+                }
+                for i in range(len(FEATURE_NAMES))
+            ],
+            "layer1_activations": a1_norm,
+            "layer2_activations": a2_norm,
+            "top_synapses": synapses,
+        }
+
+    def reinforce_trade_outcome(
+        self,
+        feature_vector: np.ndarray,
+        action: str,
+        pnl_pct: float,
+        lr: float = 0.005,
+    ) -> Dict[str, Any]:
+        """
+        Self-supervised reinforcement step from real closed trade outcomes.
+        If a trade made profit, reinforce that directional action.
+        If a trade lost money, heavily penalize that action towards HOLD/opposite.
+        """
+        X = feature_vector.reshape(1, -1)
+        action_idx = 1 if action == "BUY" else (2 if action == "SELL" else 0)
+
+        if pnl_pct > 0:
+            target_cls = action_idx
+            target_ret = float(min(10.0, pnl_pct))
+            sample_weight = 1.0 + min(2.0, pnl_pct / 2.0)
+        else:
+            # Loss penalty: Shift towards HOLD or opposite side
+            target_cls = 0  # Should have held / stayed out of the bad market setup
+            target_ret = float(max(-10.0, pnl_pct))
+            sample_weight = 2.5  # Asymmetric loss aversion: 2.5x penalty to prevent future capital destruction
+
+        # Forward pass
+        probs, pred_ret, cache = self.forward(X)
+        N = 1
+
+        dlogits = probs.copy()
+        dlogits[0, target_cls] -= 1.0
+        dlogits *= sample_weight
+
+        reg_diff = pred_ret - np.array([[target_ret]])
+        dpred_ret = 0.2 * reg_diff * sample_weight
+
+        # Backpropagation
+        a2 = cache["a2"]
+        dW_cls = a2.T @ dlogits + 1e-4 * self.W_cls
+        db_cls = np.sum(dlogits, axis=0, keepdims=True)
+
+        dW_reg = a2.T @ dpred_ret + 1e-4 * self.W_reg
+        db_reg = np.sum(dpred_ret, axis=0, keepdims=True)
+
+        da2 = dlogits @ self.W_cls.T + dpred_ret @ self.W_reg.T
+        dln2 = da2 * self._leaky_relu_grad(cache["ln2"])
+        dz2, dgamma2, dbeta2 = self._layer_norm_backward(dln2, cache["ln2_cache"])
+
+        a1 = cache["a1"]
+        dW2 = a1.T @ dz2 + 1e-4 * self.W2
+        db2 = np.sum(dz2, axis=0, keepdims=True)
+
+        da1 = dz2 @ self.W2.T
+        dln1 = da1 * self._leaky_relu_grad(cache["ln1"])
+        dz1, dgamma1, dbeta1 = self._layer_norm_backward(dln1, cache["ln1_cache"])
+
+        X_norm = cache["X_norm"]
+        dW1 = X_norm.T @ dz1 + 1e-4 * self.W1
+        db1 = np.sum(dz1, axis=0, keepdims=True)
+
+        grads = {
+            "W1": dW1,
+            "b1": db1,
+            "gamma1": dgamma1,
+            "beta1": dbeta1,
+            "W2": dW2,
+            "b2": db2,
+            "gamma2": dgamma2,
+            "beta2": dbeta2,
+            "W_cls": dW_cls,
+            "b_cls": db_cls,
+            "W_reg": dW_reg,
+            "b_reg": db_reg,
+        }
+        self._adam_step(grads, lr=lr)
+        self.train_steps += 1
+
+        return {
+            "action": action,
+            "pnl_pct": round(pnl_pct, 2),
+            "target_class": CLASS_LABELS[target_cls],
+            "sample_weight": round(sample_weight, 2),
+            "train_steps": self.train_steps,
+        }
+
     def fit(
         self,
         X: np.ndarray,

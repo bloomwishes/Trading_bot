@@ -21,6 +21,7 @@ const navItems = [
   { path: '/strategies', label: 'Strategies', icon: Settings2 },
   { path: '/risk', label: 'Risk', icon: Shield },
   { path: '/llm', label: 'AI Agent', icon: Brain },
+  { path: '/neural', label: 'Neural Brain', icon: Zap },
   { path: '/diagnostics', label: 'Diagnostics', icon: Activity },
   { path: '/logs', label: 'Logs', icon: Terminal },
 ];

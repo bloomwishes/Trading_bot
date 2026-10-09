@@ -181,7 +181,55 @@ async def train_neural_network(
 
     metrics = nn_strategy.train_on_candles(df, pair=pair)
     return {
-        "message": f"Neural network calibrated on {pair} (shadow_mode={nn_strategy.params.get('shadow_mode', True)})",
+        "message": f"Neural network calibrated on {pair} (shadow_mode={nn_strategy.params.get('shadow_mode', False)})",
         "metrics": metrics,
     }
+
+
+@router.get("/neural_network/live_brain", summary="Get real-time layer activations and firing synapses")
+async def get_neural_live_brain(request: Request, pair: str = "BTC/INR") -> dict[str, Any]:
+    """
+    Returns full neural network state:
+      - 16 Input feature values
+      - Layer 1 (64) and Layer 2 (32) neuron firing activations
+      - Top active synaptic weight connections
+      - Output class probabilities and expected forward return
+      - Capital preservation and closed trade learning telemetry
+    """
+    engine = request.app.state.engine
+    nn_strategy = next(
+        (s for s in engine.strategies if s.name == "Neural_Network"), None
+    )
+    if nn_strategy is None:
+        raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
+
+    # Fetch latest candles to guarantee real-time synaptic firing
+    try:
+        df = engine.exchange_manager.get_candles(pair=pair, interval="15m", limit=100)
+        if df is not None and not df.empty:
+            nn_strategy._latest_candles_by_pair[pair] = df
+    except Exception:
+        pass
+
+    brain_state = nn_strategy.get_live_brain_state(pair=pair)
+
+    # Add capital survival telemetry
+    current_prices = engine.exchange_manager.get_current_prices()
+    portfolio_val = engine.paper_trader.get_portfolio_value(current_prices)
+    cash_bal = engine.paper_trader.balance
+    open_count = len(engine.paper_trader.positions)
+
+    return {
+        "brain": brain_state,
+        "capital_health": {
+            "portfolio_value": round(portfolio_val, 2),
+            "cash_balance": round(cash_bal, 2),
+            "initial_balance": 10000.0,
+            "open_positions": open_count,
+            "survival_score": round(min(100.0, max(0.0, (portfolio_val / 10000.0) * 100.0)), 1),
+            "mode": engine.mode,
+            "risk_status": "OPTIMAL" if portfolio_val >= 9500.0 else "DEFENSIVE",
+        },
+    }
+
 
