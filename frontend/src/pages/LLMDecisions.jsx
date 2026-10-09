@@ -150,7 +150,7 @@ export default function LLMDecisions() {
             }`}
           >
             <Zap size={14} />
-            Deep Neural Net (Shadow)
+            Deep Neural Network (Active Signals)
           </button>
           <button
             onClick={() => setActiveTab('llm')}
@@ -177,7 +177,7 @@ export default function LLMDecisions() {
             </span>
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-neon-green/10 border border-neon-green/30 text-neon-green">
               <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
-              Active (Shadow)
+              Active Signals
             </span>
           </div>
 
@@ -197,31 +197,31 @@ export default function LLMDecisions() {
           </div>
         </div>
 
-        {/* Card 2: Shadow Mode Guard */}
-        <div className="glass-card p-5 flex flex-col justify-between border-l-4 border-l-purple-500">
+        {/* Card 2: Active Trade Execution Mode */}
+        <div className="glass-card p-5 flex flex-col justify-between border-l-4 border-l-neon-green">
           <div className="flex items-center justify-between">
             <span className="text-gray-400 text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5">
-              <ShieldCheck size={14} className="text-purple-400" />
-              Safety Mode
+              <ShieldCheck size={14} className="text-neon-green" />
+              Execution Mode
             </span>
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/15 border border-purple-500/30 text-purple-300">
-              🛡️ Zero Trade Risk
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-neon-green/15 border border-neon-green/30 text-neon-green">
+              ⚡ Active Signals Enabled
             </span>
           </div>
 
           <div className="mt-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/30 flex items-center justify-center">
-              <Layers size={20} className="text-purple-400" />
+            <div className="w-10 h-10 rounded-lg bg-neon-green/10 border border-neon-green/30 flex items-center justify-center">
+              <Layers size={20} className="text-neon-green" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-white">Paper Trading & Shadow Only</p>
-              <p className="text-[10px] text-gray-500">Signals logged; orders strictly blocked</p>
+              <p className="text-sm font-semibold text-white">Active Signal Execution & ATR Guard</p>
+              <p className="text-[10px] text-gray-400">Emits BUY/SELL signals; executes live paper trades</p>
             </div>
           </div>
 
           <div className="mt-4 pt-3 border-t border-cyber-surface/60 flex items-center justify-between text-xs">
             <span className="text-gray-400">Inferences: <strong className="text-white font-mono">{nnTelemetry?.total_predictions ?? 0}</strong></span>
-            <span className="text-gray-400">Signals Saved: <strong className="text-purple-300 font-mono">{persistedSignals.length}</strong></span>
+            <span className="text-gray-400">Signals Saved: <strong className="text-neon-green font-mono">{persistedSignals.length}</strong></span>
           </div>
         </div>
 
@@ -272,7 +272,7 @@ export default function LLMDecisions() {
                 <Activity size={18} className="text-neon-cyan animate-pulse" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Live Shadow Feed & Online Learning</h3>
+                <h3 className="text-sm font-bold text-white">Live Neural Signal Feed & Online Learning</h3>
                 <p className="text-xs text-gray-400">
                   Calibrated on: {nnTelemetry?.trained_pairs?.join(', ') || 'BTC/INR'} (15m Candles)
                 </p>
@@ -315,17 +315,17 @@ export default function LLMDecisions() {
               </div>
             </div>
             <div className="glass-card p-4">
-              <div className="text-xs text-gray-500 uppercase mb-1">Risk Mode</div>
-              <div className="text-2xl font-bold font-mono text-purple-400">Shadow (0 Risk)</div>
+              <div className="text-xs text-gray-500 uppercase mb-1">Trading Mode</div>
+              <div className="text-2xl font-bold font-mono text-neon-green">⚡ Active Signals</div>
             </div>
           </div>
 
-          {/* Recent Shadow Predictions Table */}
+          {/* Recent Neural Predictions Table */}
           <div className="glass-card overflow-hidden">
             <div className="p-4 border-b border-cyber-surface flex items-center justify-between">
               <h3 className="font-heading text-sm font-bold text-white flex items-center gap-2">
                 <TrendingUp size={16} className="text-neon-cyan" />
-                Latest Neural Network Predictions (Shadow Stream)
+                Latest Neural Network Trading Signals & Decisions
               </h3>
               <span className="text-xs text-gray-500 font-mono">
                 Auto-updating every 5s • Top {recentPredictions.length} inferences
@@ -415,8 +415,8 @@ export default function LLMDecisions() {
                             </div>
                           </td>
                           <td className="p-4 text-center">
-                            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
-                              🛡️ SHADOW (0 Risk)
+                            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-neon-green/15 text-neon-green border border-neon-green/30 font-semibold shadow-[0_0_8px_rgba(0,255,102,0.15)]">
+                              ⚡ ACTIVE SIGNAL
                             </span>
                           </td>
                         </tr>

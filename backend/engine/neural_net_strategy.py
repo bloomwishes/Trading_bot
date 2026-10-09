@@ -60,7 +60,6 @@ class NeuralNetworkStrategy(StrategyBase):
     """
 
     DEFAULT_PARAMS = {
-        "shadow_mode": False,
         "min_confidence": 0.60,
         "horizon_bars": 3,
         "return_threshold_pct": 0.6,
@@ -74,7 +73,7 @@ class NeuralNetworkStrategy(StrategyBase):
 
     def __init__(self, params: Optional[dict] = None, seed: int = 42):
         merged = {**self.DEFAULT_PARAMS, **(params or {})}
-        merged["shadow_mode"] = bool(merged.get("shadow_mode", False))
+        merged["shadow_mode"] = False
         super().__init__(name="Neural_Network", default_params=merged)
 
         self.model = DeepTradingNN(seed=seed)
@@ -443,7 +442,7 @@ class NeuralNetworkStrategy(StrategyBase):
             expected_ret = float(brain_state["expected_return_pct"])
             probs = brain_state["probabilities"]
 
-            is_shadow = bool(self.params.get("shadow_mode", False))
+            is_shadow = False
             min_conf = float(self.params.get("min_confidence", 0.60))
             current_price = float(df["close"].iloc[-1])
 
@@ -473,7 +472,8 @@ class NeuralNetworkStrategy(StrategyBase):
                 "probabilities": {k: round(v, 4) for k, v in probs.items()},
                 "stop_loss_price": round(stop_loss_price, 2),
                 "take_profit_price": round(take_profit_price, 2),
-                "shadow_mode": is_shadow,
+                "shadow_mode": False,
+                "execution_mode": "ACTIVE_SIGNALS",
                 "triggered_signal": (action != "HOLD" and confidence >= min_conf),
             }
             self._total_predictions += 1
@@ -481,14 +481,13 @@ class NeuralNetworkStrategy(StrategyBase):
             if len(self._prediction_history) > 200:
                 self._prediction_history = self._prediction_history[-200:]
 
-            mode_str = "SHADOW" if is_shadow else "LIVE_SIGNAL"
             bot_logger.debug(
-                f"[NeuralNet][{mode_str}] {pair} @ ₹{current_price:,.2f} -> "
+                f"[NeuralNet][ACTIVE_SIGNAL] {pair} @ ₹{current_price:,.2f} -> "
                 f"{action} (conf={confidence:.2%}, exp_ret={expected_ret:+.2f}%)"
             )
 
             if action in ("BUY", "SELL") and confidence >= min_conf:
-                mode_tag = "[SHADOW] " if is_shadow else "[AI NEURAL] "
+                mode_tag = "[AI NEURAL] "
                 reason = (
                     f"{mode_tag}DeepNN {action} on {pair} "
                     f"(conf={confidence:.1%}, exp_ret={expected_ret:+.2f}%, "
@@ -502,8 +501,9 @@ class NeuralNetworkStrategy(StrategyBase):
                     strength=round(confidence, 4),
                     reason=reason,
                     metadata={
-                        "shadow_mode": is_shadow,
-                        "execution_blocked": is_shadow,
+                        "shadow_mode": False,
+                        "execution_blocked": False,
+                        "execution_mode": "ACTIVE_SIGNALS",
                         "current_price": current_price,
                         "stop_loss_price": round(stop_loss_price, 2),
                         "take_profit_price": round(take_profit_price, 2),
@@ -542,7 +542,8 @@ class NeuralNetworkStrategy(StrategyBase):
                     "timestamp": timestamp_now(),
                     "train_steps": self.model.train_steps,
                     "last_loss": self.model.last_loss,
-                    "shadow_mode": bool(self.params.get("shadow_mode", False)),
+                    "shadow_mode": False,
+                    "execution_mode": "ACTIVE_SIGNALS",
                     "total_predictions": self._total_predictions,
                     "recent_reinforcements": list(reversed(self._learning_history[-20:])),
                     **state,
@@ -553,7 +554,8 @@ class NeuralNetworkStrategy(StrategyBase):
             return {
                 "train_steps": self.model.train_steps,
                 "last_loss": self.model.last_loss,
-                "shadow_mode": bool(self.params.get("shadow_mode", False)),
+                "shadow_mode": False,
+                "execution_mode": "ACTIVE_SIGNALS",
                 "total_predictions": self._total_predictions,
                 "recent_reinforcements": list(reversed(self._learning_history[-20:])),
                 **self._last_brain_state,
@@ -568,7 +570,8 @@ class NeuralNetworkStrategy(StrategyBase):
             "timestamp": timestamp_now(),
             "train_steps": self.model.train_steps,
             "last_loss": self.model.last_loss,
-            "shadow_mode": bool(self.params.get("shadow_mode", False)),
+            "shadow_mode": False,
+            "execution_mode": "ACTIVE_SIGNALS",
             "total_predictions": self._total_predictions,
             "recent_reinforcements": [],
             **state,
@@ -579,7 +582,8 @@ class NeuralNetworkStrategy(StrategyBase):
         return {
             "strategy": self.name,
             "enabled": self.enabled,
-            "shadow_mode": bool(self.params.get("shadow_mode", False)),
+            "shadow_mode": False,
+            "execution_mode": "ACTIVE_SIGNALS",
             "model_architecture": "16 -> 64 (LayerNorm+LeakyReLU) -> 32 (LayerNorm+LeakyReLU) -> DualHead(3-Class + Return)",
             "train_steps": self.model.train_steps,
             "last_loss": self.model.last_loss,

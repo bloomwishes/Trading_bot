@@ -10,7 +10,7 @@ const strategyDescriptions = {
   'rsi_divergence': 'Identifies bullish/bearish divergence between price action and RSI on 15m and 1h timeframes.',
   'sentiment_llm': 'AI-powered analysis using local Ollama LLM. Evaluates market data and provides high-confidence signals.',
   'grid_trading': 'Places automated buy/sell grid orders around current price. Auto-rebalances when price exits range.',
-  'neural_network': 'Deep Neural Network (16→64→32→DualHead) running in Shadow Mode. Predicts directional probabilities & expected returns without executing trades.',
+  'neural_network': 'Deep Neural Network (16→64→32 Dual-Head). Predicts directional probabilities & expected returns, generating active trade signals with dynamic ATR protection.',
 };
 
 const strategyIcons = {
@@ -52,7 +52,6 @@ const paramLabels = {
   num_levels: 'Grid Levels',
   capital_per_grid: 'Capital Per Grid (₹)',
   rebalance_threshold_pct: 'Rebalance Threshold %',
-  shadow_mode: 'Shadow Mode (Log Only)',
   horizon_bars: 'Prediction Horizon (Bars)',
   return_threshold_pct: 'Return Threshold %',
   learning_rate: 'Learning Rate',
@@ -210,12 +209,8 @@ export default function StrategyConfig() {
                     {strategy.enabled ? 'Active' : 'Disabled'}
                   </span>
                   {strategy.name === 'Neural_Network' && (
-                    <span className={`ml-auto text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${
-                      strategy.params?.shadow_mode
-                        ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
-                        : 'bg-neon-green/20 text-neon-green border-neon-green/30'
-                    }`}>
-                      {strategy.params?.shadow_mode ? '🛡️ Shadow Mode (0 Risk)' : '⚡ Active Trade Signals (ATR Guard)'}
+                    <span className="ml-auto text-[10px] font-mono uppercase px-2 py-0.5 rounded border bg-neon-green/20 text-neon-green border-neon-green/30 shadow-[0_0_8px_rgba(0,255,102,0.15)] font-semibold">
+                      ⚡ Active Trade Signals (ATR Guard)
                     </span>
                   )}
                 </div>

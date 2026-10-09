@@ -42,7 +42,6 @@ export default function NeuralBrain() {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrateStatus, setCalibrateStatus] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [activeMode, setActiveMode] = useState(false); // false = active trade signals, true = shadow
 
   const pairs = ['BTC/INR', 'ETH/INR', 'SOL/INR', 'XRP/INR', 'BNB/INR'];
 
@@ -52,7 +51,6 @@ export default function NeuralBrain() {
       if (res.data) {
         setBrainData(res.data.brain || null);
         setCapitalHealth(res.data.capital_health || null);
-        setActiveMode(res.data.brain?.shadow_mode || false);
       }
     } catch (err) {
       console.error('Failed to fetch neural brain:', err);
@@ -88,17 +86,6 @@ export default function NeuralBrain() {
     } finally {
       setIsCalibrating(false);
       setTimeout(() => setCalibrateStatus(''), 5000);
-    }
-  };
-
-  const handleToggleMode = async () => {
-    const newShadow = !activeMode;
-    try {
-      await updateStrategy('Neural_Network', { params: { shadow_mode: newShadow } });
-      setActiveMode(newShadow);
-      await fetchBrain(selectedPair);
-    } catch (err) {
-      console.error('Failed to toggle neural mode:', err);
     }
   };
 
@@ -148,25 +135,11 @@ export default function NeuralBrain() {
             ))}
           </select>
 
-          {/* Mode Switch: Active Trade vs Shadow */}
-          <button
-            onClick={handleToggleMode}
-            className={`px-3 py-2 rounded-lg text-xs font-bold border transition-all flex items-center gap-1.5 ${
-              !activeMode
-                ? 'bg-neon-green/20 text-neon-green border-neon-green/40 shadow-[0_0_15px_rgba(0,255,102,0.2)]'
-                : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-            }`}
-          >
-            {!activeMode ? (
-              <>
-                <CheckCircle2 size={14} /> ACTIVE TRADING SIGNALS
-              </>
-            ) : (
-              <>
-                <ShieldCheck size={14} /> SHADOW MODE (LOG ONLY)
-              </>
-            )}
-          </button>
+          {/* Active Signals Status Badge */}
+          <div className="px-3 py-2 rounded-lg text-xs font-bold border flex items-center gap-1.5 bg-neon-green/20 text-neon-green border-neon-green/40 shadow-[0_0_15px_rgba(0,255,102,0.2)]">
+            <CheckCircle2 size={14} className="text-neon-green" />
+            <span>ACTIVE TRADING SIGNALS (LIVE)</span>
+          </div>
 
           {/* Manual Synapse Pulse */}
           <button
