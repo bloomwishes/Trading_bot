@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
-import { History, Download, Filter, Calendar, TrendingUp, TrendingDown, Award, BarChart3, ChevronDown, ChevronUp } from 'lucide-react';
-import { getTradeHistory, exportTrades } from '../utils/api';
+import { History, Download, Filter, Calendar, TrendingUp, TrendingDown, Award, BarChart3, ChevronDown, ChevronUp, Brain, Zap, CheckCircle2, Loader2 } from 'lucide-react';
+import { getTradeHistory, exportTrades, trainNeuralNetworkOnHistory } from '../utils/api';
 import { formatINR, formatPercent, formatDate } from '../utils/formatters';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
@@ -8,6 +8,8 @@ export default function TradeHistory() {
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedRow, setExpandedRow] = useState(null);
+  const [trainingNN, setTrainingNN] = useState(false);
+  const [trainingResult, setTrainingResult] = useState(null);
   const [filters, setFilters] = useState({
     pair: '',
     strategy: '',
@@ -56,6 +58,25 @@ export default function TradeHistory() {
     }
   };
 
+  const handleTrainNeuralNetwork = async () => {
+    setTrainingNN(true);
+    setTrainingResult(null);
+    try {
+      const res = await trainNeuralNetworkOnHistory({ epochs: 35 });
+      setTrainingResult(res.data?.metrics || res.data);
+    } catch (err) {
+      console.error('Failed to train neural network:', err);
+      alert('Neural network training failed: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setTrainingNN(false);
+    }
+  };
+
+  // Sort trades with newest on top (descending by closed_at or created_at)
+  const displayTrades = useMemo(() => {
+    return [...trades].sort((a, b) => new Date(b.closed_at || b.created_at) - new Date(a.closed_at || a.created_at));
+  }, [trades]);
+
   // Stats calculations
   const stats = useMemo(() => {
     if (!trades.length) return { total: 0, wins: 0, losses: 0, winRate: 0, avgProfit: 0, totalPnl: 0, maxDrawdown: 0 };
@@ -84,10 +105,10 @@ export default function TradeHistory() {
     };
   }, [trades]);
 
-  // Cumulative P&L chart data
+  // Cumulative P&L chart data (must be chronologically ascending for the timeline chart)
   const chartData = useMemo(() => {
     let cumPnl = 0;
-    return trades
+    return [...trades]
       .sort((a, b) => new Date(a.closed_at || a.created_at) - new Date(b.closed_at || b.created_at))
       .map((t, i) => {
         cumPnl += (t.pnl || 0);
@@ -132,7 +153,27 @@ export default function TradeHistory() {
           </h1>
           <p className="text-gray-400 mt-1">Review past trades and performance metrics</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={handleTrainNeuralNetwork}
+            disabled={trainingNN || trades.length === 0}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-neon-cyan/10 border border-neon-cyan/40 
+                       text-neon-cyan hover:bg-neon-cyan/20 transition-all duration-300
+                       hover:shadow-[0_0_15px_rgba(0,240,255,0.25)] disabled:opacity-50"
+            title="Train Neural Network on this trade history"
+          >
+            {trainingNN ? (
+              <>
+                <Loader2 size={16} className="animate-spin text-neon-cyan" />
+                <span>Training Neural Net...</span>
+              </>
+            ) : (
+              <>
+                <Brain size={16} className="text-neon-cyan" />
+                <span>Train Neural Net on History</span>
+              </>
+            )}
+          </button>
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg border transition-all duration-300
@@ -154,6 +195,42 @@ export default function TradeHistory() {
           </button>
         </div>
       </div>
+
+      {/* Neural Network Training Success Banner */}
+      {trainingResult && (
+        <div className="glass-card p-4 border border-neon-cyan/40 bg-neon-cyan/5 rounded-xl flex items-center justify-between flex-wrap gap-3 animate-fade-in shadow-[0_0_20px_rgba(0,240,255,0.15)]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-neon-cyan/20 border border-neon-cyan/40 flex items-center justify-center text-neon-cyan flex-shrink-0">
+              <CheckCircle2 size={22} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-white flex items-center gap-2">
+                <span>Neural Network Calibrated on {trainingResult.total_trades || trades.length} Historical Trades</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/40">
+                  Weights Saved
+                </span>
+              </p>
+              <p className="text-xs text-gray-300 mt-1">
+                Processed <span className="text-neon-green font-semibold">{trainingResult.wins} Wins</span> &amp; <span className="text-neon-red font-semibold">{trainingResult.losses} Losses</span> ({trainingResult.win_rate_pct}% win rate) over {trainingResult.epochs} epochs • Final Loss: <span className="font-mono text-neon-cyan">{trainingResult.loss}</span> • Accuracy: <span className="font-mono text-neon-green">{(trainingResult.accuracy * 100).toFixed(1)}%</span> • Synaptic weights updated to protect capital!
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href="/neural"
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-neon-cyan text-black hover:bg-neon-cyan/80 transition-all shadow-[0_0_10px_rgba(0,240,255,0.4)]"
+            >
+              View Brain Activations →
+            </a>
+            <button
+              onClick={() => setTrainingResult(null)}
+              className="text-xs text-gray-400 hover:text-white px-2 py-1"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Filters Panel */}
       {showFilters && (
@@ -337,9 +414,14 @@ export default function TradeHistory() {
       <div className="glass-card overflow-hidden">
         <div className="p-4 border-b border-neon-cyan/10 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="text-lg font-heading text-white">Closed Trade History</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-heading text-white">Closed Trade History</h3>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/20">
+                Newest First
+              </span>
+            </div>
             <p className="text-xs text-gray-400">
-              Showing <span className="text-neon-cyan font-semibold">{trades.length}</span> recorded trades
+              Showing <span className="text-neon-cyan font-semibold">{displayTrades.length}</span> recorded trades (most recent on top)
             </p>
           </div>
           <div className="flex items-center gap-1 bg-cyber-surface/60 p-1 rounded-lg border border-white/5 text-xs">
@@ -366,16 +448,16 @@ export default function TradeHistory() {
               <div key={i} className="h-12 bg-cyber-surface/50 rounded animate-pulse" />
             ))}
           </div>
-        ) : trades.length === 0 ? (
+        ) : displayTrades.length === 0 ? (
           <div className="p-12 text-center text-gray-500">
             <History size={32} className="mx-auto mb-3 opacity-50" />
             <p>No trades found matching your filters</p>
           </div>
         ) : (
           <>
-            {/* MOBILE ONLY VIEW: Vertical Cards without horizontal scrolling */}
+            {/* MOBILE ONLY VIEW: Vertical Cards without horizontal scrolling (Newest First) */}
             <div className="block md:hidden p-3 space-y-3">
-              {trades.map(trade => {
+              {displayTrades.map(trade => {
                 const isExpanded = expandedRow === trade.id;
                 const isProfit = (trade.pnl || 0) >= 0;
                 return (
@@ -487,7 +569,7 @@ export default function TradeHistory() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-cyber-surface/30">
-                  {trades.map(trade => {
+                  {displayTrades.map(trade => {
                     const isExpanded = expandedRow === trade.id;
                     return (
                       <Fragment key={trade.id}>

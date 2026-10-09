@@ -215,6 +215,37 @@ class TestNeuralNetworkActiveAndBrain(unittest.TestCase):
             self.assertIn("survival_score", cap)
             self.assertIn("risk_status", cap)
 
+    def test_07_historical_trade_training_and_api(self):
+        """Verify training neural network on database closed trade history and the API endpoint."""
+        from backend.main import app
+
+        db = SessionLocal()
+        try:
+            strategy = NeuralNetworkStrategy()
+            initial_steps = strategy.model.train_steps
+            train_res = strategy.train_on_closed_trades(db, epochs=5)
+
+            self.assertEqual(train_res["status"], "success")
+            self.assertGreater(train_res["total_trades"], 0)
+            self.assertEqual(train_res["epochs"], 5)
+            self.assertIn("loss", train_res)
+            self.assertIn("accuracy", train_res)
+            self.assertTrue(train_res["weights_saved"])
+            self.assertGreater(strategy.model.train_steps, initial_steps)
+            self.assertTrue(strategy.weights_path.exists())
+
+            # Test API endpoint
+            with TestClient(app) as client:
+                res = client.post("/api/strategies/neural_network/train_on_history?epochs=3")
+                self.assertEqual(res.status_code, 200)
+                data = res.json()
+                self.assertIn("message", data)
+                self.assertIn("metrics", data)
+                self.assertEqual(data["metrics"]["status"], "success")
+                self.assertEqual(data["metrics"]["epochs"], 3)
+        finally:
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

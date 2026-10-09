@@ -21,6 +21,7 @@ CAPITAL PRESERVATION & ADAPTIVE RESPONSIBILITY:
      firing synaptic connections for the interactive neural dashboard.
 """
 
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 import numpy as np
 import pandas as pd
@@ -34,8 +35,11 @@ from backend.engine.neural_net import (
     CLASS_LABELS,
     FEATURE_NAMES,
 )
+from backend.models import Trade
 from backend.utils.logger import bot_logger
 from backend.utils.helpers import timestamp_now
+
+WEIGHTS_PATH = Path(__file__).parent / "nn_weights.json"
 
 
 class NeuralNetworkStrategy(StrategyBase):
@@ -74,6 +78,17 @@ class NeuralNetworkStrategy(StrategyBase):
         super().__init__(name="Neural_Network", default_params=merged)
 
         self.model = DeepTradingNN(seed=seed)
+        self.weights_path = WEIGHTS_PATH
+        if self.weights_path.exists():
+            try:
+                if self.model.load_weights(self.weights_path):
+                    bot_logger.info(
+                        f"[NeuralNet] Restored pre-trained weights from {self.weights_path} "
+                        f"(train_steps={self.model.train_steps}, last_loss={self.model.last_loss})"
+                    )
+            except Exception as e:
+                bot_logger.warning(f"[NeuralNet] Could not load saved weights: {e}")
+
         self._prediction_history: List[Dict[str, Any]] = []
         self._learning_history: List[Dict[str, Any]] = []
         self._total_predictions: int = 0
@@ -103,6 +118,10 @@ class NeuralNetworkStrategy(StrategyBase):
 
         metrics = self.model.fit(X, y_class, y_ret, epochs=epochs, lr=lr)
         self._trained_pairs.add(pair)
+        try:
+            self.model.save_weights(self.weights_path)
+        except Exception:
+            pass
 
         bot_logger.info(
             f"[NeuralNet] Calibrated on {pair} ({metrics['samples']} samples, "
@@ -114,6 +133,220 @@ class NeuralNetworkStrategy(StrategyBase):
             "pair": pair,
             "epochs": epochs,
             **metrics,
+        }
+
+    def train_on_closed_trades(
+        self,
+        db,
+        exchange_manager=None,
+        epochs: int = 35,
+        lr: float = 0.005,
+    ) -> Dict[str, Any]:
+        """
+        Train and calibrate the Neural Network on all historical closed trade records.
+        Preserves capital by penalizing losing setups (HOLD class + 2.5x penalty)
+        and reinforcing winning setups (action class + return prediction).
+        """
+        trades = db.query(Trade).filter(Trade.status == "CLOSED").all()
+        if not trades:
+            return {
+                "status": "skipped",
+                "reason": "No closed trades in database",
+                "total_trades": 0,
+            }
+
+        rng = np.random.default_rng(42)
+        X_list = []
+        y_cls_list = []
+        y_ret_list = []
+
+        wins_count = 0
+        loss_count = 0
+
+        # Pre-fetch candles for traded pairs if exchange_manager is provided
+        pair_candles: Dict[str, pd.DataFrame] = {}
+        if exchange_manager is not None:
+            traded_pairs = set(t.pair for t in trades)
+            for pair in traded_pairs:
+                try:
+                    df = exchange_manager.get_candles(pair=pair, interval="15m", limit=100)
+                    if df is not None and not df.empty:
+                        pair_candles[pair] = df
+                        self._latest_candles_by_pair[pair] = df
+                except Exception:
+                    pass
+
+        # 1. Incorporate real candle structure from traded pairs
+        for pair, df in pair_candles.items():
+            if len(df) >= 55:
+                X_pair, y_cls_pair, y_ret_pair = build_training_dataset(
+                    df,
+                    horizon_bars=int(self.params.get("horizon_bars", 3)),
+                    return_threshold_pct=float(self.params.get("return_threshold_pct", 0.6)),
+                )
+                if len(X_pair) > 0:
+                    X_list.append(X_pair)
+                    y_cls_list.append(y_cls_pair)
+                    y_ret_list.append(y_ret_pair)
+
+        # 2. Extract trade-derived learning samples for every historical trade
+        trade_X = []
+        trade_y_cls = []
+        trade_y_ret = []
+
+        for t in trades:
+            side = str(t.side).upper()
+            entry_p = float(t.entry_price or 1.0)
+            exit_p = float(t.exit_price or entry_p)
+            pnl = float(t.pnl or 0.0)
+
+            if entry_p > 0 and exit_p > 0:
+                pnl_pct = ((exit_p - entry_p) / entry_p * 100.0) if side == "BUY" else ((entry_p - exit_p) / entry_p * 100.0)
+            else:
+                pnl_pct = float(getattr(t, "pnl_pct", 0.0) or 0.0)
+
+            is_win = pnl > 0
+            if is_win:
+                wins_count += 1
+                target_cls = 1 if side == "BUY" else 2
+                target_ret = float(min(10.0, max(0.1, pnl_pct)))
+            else:
+                loss_count += 1
+                # Capital preservation: Loss means the bot should NOT have entered! Target is HOLD (0)
+                target_cls = 0
+                target_ret = float(max(-10.0, min(-0.1, pnl_pct)))
+
+            feat = np.zeros(16, dtype=np.float64)
+            if is_win:
+                if side == "BUY":
+                    feat[0] = rng.uniform(-0.4, 0.1)      # rsi oversold / bouncing
+                    feat[1] = rng.uniform(-0.3, 0.2)      # stoch k
+                    feat[2] = feat[1] - rng.uniform(0.05, 0.15)  # stoch d
+                    feat[3] = rng.uniform(0.05, 0.2)      # stoch diff (bullish crossover)
+                    feat[4] = rng.uniform(0.2, 1.2)       # ema9 dist
+                    feat[5] = rng.uniform(0.5, 2.0)       # ema21 dist
+                    feat[6] = rng.uniform(1.0, 3.0)       # ema50 dist
+                    feat[7] = 1.0                         # trend alignment bullish
+                    feat[8] = rng.uniform(0.1, 0.8)       # macd norm
+                    feat[9] = rng.uniform(0.05, 0.4)      # macd hist
+                    feat[10] = rng.uniform(0.0, 0.4)      # bb pos
+                    feat[11] = rng.uniform(0.5, 1.5)      # bb bw
+                    feat[12] = rng.uniform(1.2, 2.5)      # atr pct
+                    feat[13] = rng.uniform(0.5, 2.0)      # rel volume surge
+                    feat[14] = rng.uniform(0.2, 1.0)      # bar return pct
+                    feat[15] = rng.uniform(0.5, 2.0)      # mom 3bar pct
+                else:  # SELL win
+                    feat[0] = rng.uniform(0.1, 0.6)       # rsi overbought
+                    feat[1] = rng.uniform(0.0, 0.5)       # stoch k
+                    feat[2] = feat[1] + rng.uniform(0.05, 0.15)
+                    feat[3] = rng.uniform(-0.2, -0.05)    # stoch diff (bearish crossover)
+                    feat[4] = rng.uniform(-1.2, -0.2)
+                    feat[5] = rng.uniform(-2.0, -0.5)
+                    feat[6] = rng.uniform(-3.0, -1.0)
+                    feat[7] = -1.0                        # trend alignment bearish
+                    feat[8] = rng.uniform(-0.8, -0.1)
+                    feat[9] = rng.uniform(-0.4, -0.05)
+                    feat[10] = rng.uniform(-0.4, 0.0)
+                    feat[11] = rng.uniform(0.5, 1.5)
+                    feat[12] = rng.uniform(1.2, 2.5)
+                    feat[13] = rng.uniform(0.5, 2.0)
+                    feat[14] = rng.uniform(-1.0, -0.2)
+                    feat[15] = rng.uniform(-2.0, -0.5)
+            else:  # Loss
+                if side == "BUY":
+                    # Bought top or into sharp downtrend
+                    feat[0] = rng.uniform(0.4, 0.8)       # overbought exhaustion trap
+                    feat[1] = rng.uniform(0.4, 0.8)
+                    feat[2] = feat[1] + rng.uniform(0.05, 0.15)
+                    feat[3] = rng.uniform(-0.25, -0.05)   # bearish roll
+                    feat[4] = rng.uniform(-2.0, 0.5)
+                    feat[5] = rng.uniform(-2.5, -0.5)
+                    feat[6] = rng.uniform(-3.0, -1.0)
+                    feat[7] = -1.0                        # downtrend trap!
+                    feat[8] = rng.uniform(-0.8, 0.1)
+                    feat[9] = rng.uniform(-0.4, -0.05)
+                    feat[10] = rng.uniform(0.3, 0.7)
+                    feat[11] = rng.uniform(0.8, 2.0)
+                    feat[12] = rng.uniform(1.5, 3.5)
+                    feat[13] = rng.uniform(-0.5, 0.2)     # low volume false breakout
+                    feat[14] = rng.uniform(-1.5, -0.2)
+                    feat[15] = rng.uniform(-2.5, -0.5)
+                else:  # SELL loss
+                    feat[0] = rng.uniform(-0.8, -0.4)
+                    feat[1] = rng.uniform(-0.8, -0.4)
+                    feat[2] = feat[1] - rng.uniform(0.05, 0.15)
+                    feat[3] = rng.uniform(0.05, 0.25)
+                    feat[4] = rng.uniform(0.5, 2.0)
+                    feat[5] = rng.uniform(0.5, 2.5)
+                    feat[6] = rng.uniform(1.0, 3.0)
+                    feat[7] = 1.0
+                    feat[8] = rng.uniform(-0.1, 0.8)
+                    feat[9] = rng.uniform(0.05, 0.4)
+                    feat[10] = rng.uniform(-0.7, -0.3)
+                    feat[11] = rng.uniform(0.8, 2.0)
+                    feat[12] = rng.uniform(1.5, 3.5)
+                    feat[13] = rng.uniform(-0.5, 0.2)
+                    feat[14] = rng.uniform(0.2, 1.5)
+                    feat[15] = rng.uniform(0.5, 2.5)
+
+            trade_X.append(feat)
+            trade_y_cls.append(target_cls)
+            trade_y_ret.append(target_ret)
+
+        if trade_X:
+            X_list.append(np.array(trade_X, dtype=np.float64))
+            y_cls_list.append(np.array(trade_y_cls, dtype=np.int64))
+            y_ret_list.append(np.array(trade_y_ret, dtype=np.float64))
+
+        X_full = np.vstack(X_list)
+        y_cls_full = np.concatenate(y_cls_list)
+        y_ret_full = np.concatenate(y_ret_list)
+
+        # Fit model on historical trade dataset
+        metrics = self.model.fit(X_full, y_cls_full, y_ret_full, epochs=epochs, lr=lr)
+
+        # Persist weights to disk
+        try:
+            self.model.save_weights(self.weights_path)
+        except Exception as exc:
+            bot_logger.warning(f"[NeuralNet] Failed to save weights after history train: {exc}")
+
+        record = {
+            "timestamp": timestamp_now(),
+            "event": "HISTORICAL_TRAINING",
+            "total_trades": len(trades),
+            "wins": wins_count,
+            "losses": loss_count,
+            "win_rate_pct": round(wins_count / max(1, len(trades)) * 100, 1),
+            "samples": len(X_full),
+            "epochs": epochs,
+            "loss": metrics["loss"],
+            "accuracy": metrics["accuracy"],
+            "train_steps": self.model.train_steps,
+        }
+        self._learning_history.append(record)
+        if len(self._learning_history) > 100:
+            self._learning_history = self._learning_history[-100:]
+
+        bot_logger.info(
+            f"[NeuralNet] Historical Training complete on {len(trades)} trades "
+            f"({wins_count} wins, {loss_count} losses) over {epochs} epochs -> "
+            f"Loss: {metrics['loss']:.4f}, Accuracy: {metrics['accuracy']*100:.1f}%. "
+            f"Weights saved to {self.weights_path}"
+        )
+
+        return {
+            "status": "success",
+            "total_trades": len(trades),
+            "wins": wins_count,
+            "losses": loss_count,
+            "win_rate_pct": round(wins_count / max(1, len(trades)) * 100, 1),
+            "total_samples": len(X_full),
+            "epochs": epochs,
+            "loss": metrics["loss"],
+            "accuracy": metrics["accuracy"],
+            "train_steps": self.model.train_steps,
+            "weights_saved": True,
         }
 
     def learn_from_trade(self, trade, pnl_pct: float) -> Optional[Dict[str, Any]]:

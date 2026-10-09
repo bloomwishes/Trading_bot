@@ -9,8 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
+from backend.database import get_db
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
@@ -183,6 +186,36 @@ async def train_neural_network(
     return {
         "message": f"Neural network calibrated on {pair} (shadow_mode={nn_strategy.params.get('shadow_mode', False)})",
         "metrics": metrics,
+    }
+
+
+@router.post("/neural_network/train_on_history", summary="Train neural network on database closed trade history")
+async def train_neural_network_on_history(
+    request: Request,
+    epochs: int = Query(35, ge=1, le=200, description="Training epochs"),
+    learning_rate: float = Query(0.005, ge=0.0001, le=0.1, description="Learning rate"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Train and adapt the neural network using all recorded closed trade outcomes in SQLite.
+    Penalizes losing trades (HOLD target + 2.5x penalty) and rewards winning setups.
+    """
+    engine = request.app.state.engine
+    nn_strategy = next(
+        (s for s in engine.strategies if s.name == "Neural_Network"), None
+    )
+    if nn_strategy is None:
+        raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
+
+    result = nn_strategy.train_on_closed_trades(
+        db=db,
+        exchange_manager=getattr(engine, "exchange_manager", None),
+        epochs=epochs,
+        lr=learning_rate,
+    )
+    return {
+        "message": f"Neural network trained on {result.get('total_trades', 0)} historical trades ({result.get('wins', 0)} wins, {result.get('losses', 0)} losses)",
+        "metrics": result,
     }
 
 

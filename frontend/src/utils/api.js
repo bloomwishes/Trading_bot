@@ -76,6 +76,7 @@ export const getDiagnostics = () => api.get('/diagnostics');
 // ==========================================
 export const getNeuralNetworkTelemetry = (limit = 50) => api.get('/strategies/shadow/predictions', { params: { limit } });
 export const trainNeuralNetwork = (pair = 'BTC/INR') => api.post('/strategies/neural_network/train', { pair });
+export const trainNeuralNetworkOnHistory = (params = {}) => api.post('/strategies/neural_network/train_on_history', null, { params });
 export const getNeuralLiveBrain = (pair = 'BTC/INR') => api.get('/strategies/neural_network/live_brain', { params: { pair } });
 
 export default api;
