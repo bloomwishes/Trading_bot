@@ -6,6 +6,8 @@ Includes 60-second market-data caching.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -37,22 +39,34 @@ class ExchangeManager:
             api_secret=settings.BINANCE_API_SECRET,
         )
 
-        # Simple in-memory cache: key → (timestamp, data)
-        self._cache: Dict[str, tuple[float, Any]] = {}
+        # Simple in-memory cache: key → (mono_timestamp, data, utc_iso_fetch_time)
+        self._cache: Dict[str, tuple[float, Any, str]] = {}
+        self._cache_lock = threading.Lock()
 
     # ── Cache helpers ──────────────────────────────────────────────────
+    def _cache_get_entry(self, key: str) -> Optional[tuple[float, Any, str]]:
+        with self._cache_lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                return None
+            ts, data, fetch_time = entry
+            if time.monotonic() - ts > self.CACHE_TTL:
+                del self._cache[key]
+                return None
+            return entry
+
+    def _cache_set_entry(self, key: str, data: Any) -> str:
+        fetch_time = datetime.now(timezone.utc).isoformat()
+        with self._cache_lock:
+            self._cache[key] = (time.monotonic(), data, fetch_time)
+        return fetch_time
+
     def _cache_get(self, key: str) -> Any | None:
-        entry = self._cache.get(key)
-        if entry is None:
-            return None
-        ts, data = entry
-        if time.monotonic() - ts > self.CACHE_TTL:
-            del self._cache[key]
-            return None
-        return data
+        entry = self._cache_get_entry(key)
+        return entry[1] if entry is not None else None
 
     def _cache_set(self, key: str, data: Any) -> None:
-        self._cache[key] = (time.monotonic(), data)
+        self._cache_set_entry(key, data)
 
     # ── Dual-exchange dispatch ─────────────────────────────────────────
     def _try_primary_then_fallback(
@@ -101,19 +115,44 @@ class ExchangeManager:
         self._cache_set(cache_key, data)
         return data
 
+    def get_candles_with_meta(
+        self,
+        pair: str,
+        interval: str = "15m",
+        limit: int = 100,
+    ) -> tuple[pd.DataFrame, Dict[str, Any]]:
+        """Fetch OHLCV candles with freshness and cache metadata."""
+        cache_key = f"candles:{pair}:{interval}:{limit}"
+        entry = self._cache_get_entry(cache_key)
+        if entry is not None:
+            ts, data, fetch_time = entry
+            age = time.monotonic() - ts
+            df_copy = data.copy() if hasattr(data, "copy") else data
+            return df_copy, {
+                "is_cache_hit": True,
+                "cache_age_seconds": round(age, 2),
+                "fetch_timestamp": fetch_time,
+                "cache_ttl": self.CACHE_TTL,
+            }
+
+        data = self._try_primary_then_fallback("get_candles", pair, interval, limit)
+        fetch_time = self._cache_set_entry(cache_key, data)
+        df_copy = data.copy() if hasattr(data, "copy") else data
+        return df_copy, {
+            "is_cache_hit": False,
+            "cache_age_seconds": 0.0,
+            "fetch_timestamp": fetch_time,
+            "cache_ttl": self.CACHE_TTL,
+        }
+
     def get_candles(
         self,
         pair: str,
         interval: str = "15m",
         limit: int = 100,
     ) -> pd.DataFrame:
-        cache_key = f"candles:{pair}:{interval}:{limit}"
-        cached = self._cache_get(cache_key)
-        if cached is not None:
-            return cached
-        data = self._try_primary_then_fallback("get_candles", pair, interval, limit)
-        self._cache_set(cache_key, data)
-        return data
+        df, _ = self.get_candles_with_meta(pair, interval, limit)
+        return df
 
     def get_balances(self) -> Dict[str, Dict[str, float]]:
         return self._try_primary_then_fallback("get_balances")

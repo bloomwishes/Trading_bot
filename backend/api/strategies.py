@@ -238,9 +238,15 @@ async def get_neural_live_brain(request: Request, pair: str = "BTC/INR") -> dict
 
     # Fetch latest candles to guarantee real-time synaptic firing
     try:
-        df = engine.exchange_manager.get_candles(pair=pair, interval="15m", limit=100)
+        if hasattr(engine.exchange_manager, "get_candles_with_meta"):
+            df, meta = engine.exchange_manager.get_candles_with_meta(pair=pair, interval="15m", limit=100)
+        else:
+            df = engine.exchange_manager.get_candles(pair=pair, interval="15m", limit=100)
+            meta = {}
         if df is not None and not df.empty:
             nn_strategy._latest_candles_by_pair[pair] = df
+            if hasattr(nn_strategy, "_latest_candle_meta"):
+                nn_strategy._latest_candle_meta[pair] = meta
     except Exception:
         pass
 

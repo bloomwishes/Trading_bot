@@ -21,6 +21,8 @@ CAPITAL PRESERVATION & ADAPTIVE RESPONSIBILITY:
      firing synaptic connections for the interactive neural dashboard.
 """
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import numpy as np
@@ -94,7 +96,70 @@ class NeuralNetworkStrategy(StrategyBase):
         self._trained_pairs: set = set()
         self._latest_features_by_pair: Dict[str, np.ndarray] = {}
         self._latest_candles_by_pair: Dict[str, pd.DataFrame] = {}
+        self._latest_candle_meta: Dict[str, Dict[str, Any]] = {}
+        self._last_input_hash: Dict[str, str] = {}
+        self._last_diagnostics: Dict[str, Dict[str, Any]] = {}
         self._last_brain_state: Optional[Dict[str, Any]] = None
+
+    def _instrument_and_log_inference(
+        self,
+        pair: str,
+        df: pd.DataFrame,
+        raw_x: np.ndarray,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Instruments and logs the 16 input features, freshness metadata, vector hash,
+        and change detection for this neural network inference.
+        """
+        meta = meta or {}
+        norm_x = self.model._normalize_input(raw_x.reshape(1, -1))[0]
+
+        # Compute deterministic hash of the normalized 16-feature vector
+        vector_bytes = np.ascontiguousarray(np.round(norm_x, 4)).tobytes()
+        input_hash = hashlib.sha256(vector_bytes).hexdigest()[:16]
+
+        prev_hash = self._last_input_hash.get(pair)
+        differs = (prev_hash is None or input_hash != prev_hash)
+        self._last_input_hash[pair] = input_hash
+
+        fetch_ts = meta.get("fetch_timestamp", timestamp_now())
+        cache_age = float(meta.get("cache_age_seconds", 0.0))
+        is_hit = bool(meta.get("is_cache_hit", False))
+
+        newest_candle_ts = str(df["timestamp"].iloc[-1]) if len(df) > 0 else "N/A"
+        last_completed_candle_ts = str(df["timestamp"].iloc[-2]) if len(df) >= 2 else "N/A"
+
+        raw_features = {
+            FEATURE_NAMES[i]: round(float(raw_x[i]), 5)
+            for i in range(len(FEATURE_NAMES))
+        }
+        norm_features = {
+            FEATURE_NAMES[i]: round(float(norm_x[i]), 4)
+            for i in range(len(FEATURE_NAMES))
+        }
+
+        bot_logger.info(
+            f"[DeepTradingNN Inference Diagnostics] pair={pair} | "
+            f"fetch_ts={fetch_ts} | cache_age={cache_age:.1f}s (hit={is_hit}) | "
+            f"newest_candle={newest_candle_ts} | last_completed_candle={last_completed_candle_ts} | "
+            f"input_hash={input_hash} | vector_changed={differs} | "
+            f"raw_features={json.dumps(raw_features)} | norm_features={json.dumps(norm_features)}"
+        )
+
+        diag = {
+            "fetch_timestamp": fetch_ts,
+            "cache_age_seconds": cache_age,
+            "is_cache_hit": is_hit,
+            "newest_candle_timestamp": newest_candle_ts,
+            "last_completed_candle_timestamp": last_completed_candle_ts,
+            "input_vector_hash": input_hash,
+            "differs_from_previous": differs,
+            "raw_features": raw_features,
+            "normalized_features": norm_features,
+        }
+        self._last_diagnostics[pair] = diag
+        return diag
 
     def train_on_candles(self, df: pd.DataFrame, pair: str = "GENERIC") -> Dict[str, Any]:
         """
@@ -427,6 +492,8 @@ class NeuralNetworkStrategy(StrategyBase):
                 return None
             latest_x = features[-1]
             self._latest_features_by_pair[pair] = latest_x
+            meta = self._latest_candle_meta.get(pair, {})
+            diagnostics = self._instrument_and_log_inference(pair, df, latest_x, meta)
 
             # Full inference with layer activations for visualizer
             brain_state = self.model.predict_with_activations(latest_x)
@@ -434,6 +501,7 @@ class NeuralNetworkStrategy(StrategyBase):
                 "pair": pair,
                 "price": float(df["close"].iloc[-1]),
                 "timestamp": timestamp_now(),
+                "diagnostics": diagnostics,
                 **brain_state,
             }
 
@@ -531,10 +599,12 @@ class NeuralNetworkStrategy(StrategyBase):
         """
         # If we have recent candles, re-run with fresh activations
         df = self._latest_candles_by_pair.get(pair)
+        meta = self._latest_candle_meta.get(pair, {})
         if df is not None and len(df) >= 55:
             features, _ = extract_features_matrix(df)
             if len(features) > 0:
                 latest_x = features[-1]
+                diagnostics = self._instrument_and_log_inference(pair, df, latest_x, meta)
                 state = self.model.predict_with_activations(latest_x)
                 return {
                     "pair": pair,
@@ -546,6 +616,7 @@ class NeuralNetworkStrategy(StrategyBase):
                     "execution_mode": "ACTIVE_SIGNALS",
                     "total_predictions": self._total_predictions,
                     "recent_reinforcements": list(reversed(self._learning_history[-20:])),
+                    "diagnostics": diagnostics,
                     **state,
                 }
 
