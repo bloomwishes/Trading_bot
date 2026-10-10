@@ -258,7 +258,53 @@ async def train_neural_network_experimental(
     }
 
 
+@router.post("/neural_network/combine_models", summary="Combine historical macro data and closed-trade experience into unified model")
+async def combine_neural_models(
+    request: Request,
+    days: int = Query(730, ge=30, le=1000, description="Number of daily candles (730 = 24 months)"),
+    epochs: int = Query(100, ge=1, le=300, description="Training epochs"),
+    horizon_bars: int = Query(5, ge=1, le=30, description="Forward return horizon bars"),
+    return_threshold_pct: float = Query(2.0, ge=0.1, le=15.0, description="Return threshold % for BUY/SELL labels"),
+    learning_rate: float = Query(0.005, ge=0.0001, le=0.1, description="Learning rate"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Combines 24 months of CoinDCX macro market structure with all recorded closed-trade
+    outcomes in SQLite into a single unified high-performing model and persists it to live weights.
+    """
+    engine = request.app.state.engine
+    nn_strategy = next(
+        (s for s in engine.strategies if s.name == "Neural_Network"), None
+    )
+    if nn_strategy is None:
+        raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
+
+    result = nn_strategy.combine_and_train_unified_model(
+        db=db,
+        exchange_manager=getattr(engine, "exchange_manager", None),
+        days=days,
+        epochs=epochs,
+        lr=learning_rate,
+        horizon_bars=horizon_bars,
+        return_threshold_pct=return_threshold_pct,
+    )
+    if result.get("status") == "failed":
+        raise HTTPException(status_code=400, detail=result.get("reason", "Failed to combine and train model"))
+
+    return {
+        "message": (
+            f"Unified model trained on {result.get('total_samples', 0)} total samples "
+            f"({result.get('macro_samples', 0)} macro candles, {result.get('trade_samples', 0)} trade experiences). "
+            f"Overall Accuracy: {result.get('overall_accuracy', 0)*100:.1f}%, "
+            f"Macro Acc: {result.get('macro_accuracy', 0)*100:.1f}%, "
+            f"Trade Acc: {result.get('trade_accuracy', 0)*100:.1f}%."
+        ),
+        "result": result,
+    }
+
+
 @router.get("/neural_network/live_brain", summary="Get real-time layer activations and firing synapses")
+
 async def get_neural_live_brain(request: Request, pair: str = "BTC/INR") -> dict[str, Any]:
     """
     Returns full neural network state:

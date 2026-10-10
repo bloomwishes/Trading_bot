@@ -351,6 +351,49 @@ class TestNeuralNetworkActiveAndBrain(unittest.TestCase):
             self.assertFalse(data["result"]["live_model_touched"])
             self.assertTrue(EXPERIMENTAL_WEIGHTS_PATH.exists())
 
+    def test_10_combine_unified_model_and_api(self):
+        """Verify combining macro data and closed-trade experience into a unified model."""
+        from backend.engine.neural_net_strategy import WEIGHTS_PATH
+        from backend.main import app
+        import tempfile
+
+        db = SessionLocal()
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp_file:
+            tmp_path = Path(tmp_file.name)
+
+        try:
+            strategy = NeuralNetworkStrategy()
+            res = strategy.combine_and_train_unified_model(
+                db=db,
+                days=60,
+                epochs=3,
+                lr=0.005,
+                horizon_bars=2,
+                return_threshold_pct=1.0,
+                save_path=tmp_path,
+            )
+            self.assertEqual(res["status"], "success")
+            self.assertGreater(res["total_samples"], 0)
+            self.assertIn("overall_accuracy", res)
+            self.assertIn("macro_accuracy", res)
+            self.assertIn("trade_accuracy", res)
+            self.assertTrue(tmp_path.exists())
+
+            # Test API endpoint
+            with TestClient(app) as client:
+                api_res = client.post("/api/strategies/neural_network/combine_models?days=60&epochs=2&horizon_bars=2")
+                self.assertEqual(api_res.status_code, 200)
+                data = api_res.json()
+                self.assertIn("message", data)
+                self.assertIn("result", data)
+                self.assertEqual(data["result"]["status"], "success")
+                self.assertTrue(data["result"]["weights_saved"])
+        finally:
+            db.close()
+            if tmp_path.exists():
+                tmp_path.unlink()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

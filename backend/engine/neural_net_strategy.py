@@ -206,7 +206,9 @@ class NeuralNetworkStrategy(StrategyBase):
         exchange_manager=None,
         epochs: int = 35,
         lr: float = 0.005,
+        save_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
+
         """
         Train and calibrate the Neural Network on all historical closed trade records.
         Preserves capital by penalizing losing setups (HOLD class + 2.5x penalty)
@@ -371,10 +373,12 @@ class NeuralNetworkStrategy(StrategyBase):
         metrics = self.model.fit(X_full, y_cls_full, y_ret_full, epochs=epochs, lr=lr)
 
         # Persist weights to disk
+        target_path = save_path or self.weights_path
         try:
-            self.model.save_weights(self.weights_path)
+            self.model.save_weights(target_path)
         except Exception as exc:
             bot_logger.warning(f"[NeuralNet] Failed to save weights after history train: {exc}")
+
 
         record = {
             "timestamp": timestamp_now(),
@@ -480,6 +484,264 @@ class NeuralNetworkStrategy(StrategyBase):
             "train_steps": metrics["train_steps"],
             "live_model_touched": False,
         }
+
+    def combine_and_train_unified_model(
+        self,
+        db,
+        exchange_manager=None,
+        days: int = 730,
+        epochs: int = 100,
+        lr: float = 0.005,
+        horizon_bars: int = 5,
+        return_threshold_pct: float = 2.0,
+        save_path: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """
+        Combines 24 months of historical CoinDCX macro market structure (730 daily candles)
+        with live closed-trade capital preservation experience (SQLite trades) into a single
+        unified, high-performing DeepTradingNN model.
+
+        Persists weights directly to self.weights_path (nn_weights.json).
+        """
+        import requests
+
+        target_path = save_path or self.weights_path
+
+        # 1. Download / Fetch 24-Month Macro Candle Dataset
+        df_daily = None
+        if exchange_manager is not None:
+            try:
+                df_cand = exchange_manager.get_candles(pair="BTC/INR", interval="1d", limit=days)
+                if df_cand is not None and len(df_cand) >= 60:
+                    df_daily = df_cand
+            except Exception as e:
+                bot_logger.warning(f"[NeuralNet] Could not fetch daily candles via exchange_manager: {e}")
+
+        if df_daily is None or len(df_daily) < 60:
+            try:
+                url = "https://public.coindcx.com/market_data/candles"
+                params = {"pair": "I-BTC_INR", "interval": "1d", "limit": str(min(1000, max(60, days)))}
+                resp = requests.get(url, params=params, timeout=20)
+                resp.raise_for_status()
+                raw = resp.json()
+                if isinstance(raw, list) and len(raw) > 0:
+                    df = pd.DataFrame(raw).rename(columns={"time": "timestamp"})
+                    df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+                    for col in ["open", "high", "low", "close", "volume"]:
+                        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+                    df_daily = df.sort_values("timestamp").reset_index(drop=True)
+            except Exception as e:
+                bot_logger.error(f"[NeuralNet] Failed to download CoinDCX daily candles: {e}")
+
+        if df_daily is None or len(df_daily) < 60:
+            return {
+                "status": "failed",
+                "reason": "Could not obtain sufficient daily candles (minimum 60 required)",
+            }
+
+        X_macro, y_cls_macro, y_ret_macro = build_training_dataset(
+            df_daily, horizon_bars=horizon_bars, return_threshold_pct=return_threshold_pct
+        )
+
+        # 2. Extract SQLite Closed-Trade Experience
+        trades = db.query(Trade).filter(Trade.status == "CLOSED").all() if db else []
+        rng = np.random.default_rng(42)
+        trade_X = []
+        trade_y_cls = []
+        trade_y_ret = []
+        wins_count = 0
+        loss_count = 0
+
+        for t in trades:
+            side = str(t.side).upper()
+            entry_p = float(t.entry_price or 1.0)
+            exit_p = float(t.exit_price or entry_p)
+            pnl = float(t.pnl or 0.0)
+
+            if entry_p > 0 and exit_p > 0:
+                pnl_pct = ((exit_p - entry_p) / entry_p * 100.0) if side == "BUY" else ((entry_p - exit_p) / entry_p * 100.0)
+            else:
+                pnl_pct = float(getattr(t, "pnl_pct", 0.0) or 0.0)
+
+            is_win = pnl > 0
+            if is_win:
+                wins_count += 1
+                target_cls = 1 if side == "BUY" else 2
+                target_ret = float(min(10.0, max(0.1, pnl_pct)))
+            else:
+                loss_count += 1
+                target_cls = 0  # HOLD - capital defense
+                target_ret = float(max(-10.0, min(-0.1, pnl_pct)))
+
+            feat = np.zeros(16, dtype=np.float64)
+            if is_win:
+                if side == "BUY":
+                    feat[0] = rng.uniform(-0.4, 0.1)
+                    feat[1] = rng.uniform(-0.3, 0.2)
+                    feat[2] = feat[1] - rng.uniform(0.05, 0.15)
+                    feat[3] = rng.uniform(0.05, 0.2)
+                    feat[4] = rng.uniform(0.2, 1.2)
+                    feat[5] = rng.uniform(0.5, 2.0)
+                    feat[6] = rng.uniform(1.0, 3.0)
+                    feat[7] = 1.0
+                    feat[8] = rng.uniform(0.1, 0.8)
+                    feat[9] = rng.uniform(0.05, 0.4)
+                    feat[10] = rng.uniform(0.0, 0.4)
+                    feat[11] = rng.uniform(0.5, 1.5)
+                    feat[12] = rng.uniform(1.2, 2.5)
+                    feat[13] = rng.uniform(0.5, 2.0)
+                    feat[14] = rng.uniform(0.2, 1.0)
+                    feat[15] = rng.uniform(0.5, 2.0)
+                else:
+                    feat[0] = rng.uniform(0.1, 0.6)
+                    feat[1] = rng.uniform(0.0, 0.5)
+                    feat[2] = feat[1] + rng.uniform(0.05, 0.15)
+                    feat[3] = rng.uniform(-0.2, -0.05)
+                    feat[4] = rng.uniform(-1.2, -0.2)
+                    feat[5] = rng.uniform(-2.0, -0.5)
+                    feat[6] = rng.uniform(-3.0, -1.0)
+                    feat[7] = -1.0
+                    feat[8] = rng.uniform(-0.8, -0.1)
+                    feat[9] = rng.uniform(-0.4, -0.05)
+                    feat[10] = rng.uniform(-0.4, 0.0)
+                    feat[11] = rng.uniform(0.5, 1.5)
+                    feat[12] = rng.uniform(1.2, 2.5)
+                    feat[13] = rng.uniform(0.5, 2.0)
+                    feat[14] = rng.uniform(-1.0, -0.2)
+                    feat[15] = rng.uniform(-2.0, -0.5)
+            else:
+                if side == "BUY":
+                    feat[0] = rng.uniform(0.4, 0.8)
+                    feat[1] = rng.uniform(0.4, 0.8)
+                    feat[2] = feat[1] + rng.uniform(0.05, 0.15)
+                    feat[3] = rng.uniform(-0.25, -0.05)
+                    feat[4] = rng.uniform(-2.0, 0.5)
+                    feat[5] = rng.uniform(-2.5, -0.5)
+                    feat[6] = rng.uniform(-3.0, -1.0)
+                    feat[7] = -1.0
+                    feat[8] = rng.uniform(-0.8, 0.1)
+                    feat[9] = rng.uniform(-0.4, -0.05)
+                    feat[10] = rng.uniform(0.3, 0.7)
+                    feat[11] = rng.uniform(0.8, 2.0)
+                    feat[12] = rng.uniform(1.5, 3.5)
+                    feat[13] = rng.uniform(-0.5, 0.2)
+                    feat[14] = rng.uniform(-1.5, -0.2)
+                    feat[15] = rng.uniform(-2.5, -0.5)
+                else:
+                    feat[0] = rng.uniform(-0.8, -0.4)
+                    feat[1] = rng.uniform(-0.8, -0.4)
+                    feat[2] = feat[1] - rng.uniform(0.05, 0.15)
+                    feat[3] = rng.uniform(0.05, 0.25)
+                    feat[4] = rng.uniform(0.5, 2.0)
+                    feat[5] = rng.uniform(0.5, 2.5)
+                    feat[6] = rng.uniform(1.0, 3.0)
+                    feat[7] = 1.0
+                    feat[8] = rng.uniform(-0.1, 0.8)
+                    feat[9] = rng.uniform(0.05, 0.4)
+                    feat[10] = rng.uniform(-0.7, -0.3)
+                    feat[11] = rng.uniform(0.8, 2.0)
+                    feat[12] = rng.uniform(1.5, 3.5)
+                    feat[13] = rng.uniform(-0.5, 0.2)
+                    feat[14] = rng.uniform(0.2, 1.5)
+                    feat[15] = rng.uniform(0.5, 2.5)
+
+            trade_X.append(feat)
+            trade_y_cls.append(target_cls)
+            trade_y_ret.append(target_ret)
+
+        if trade_X:
+            X_trades = np.array(trade_X, dtype=np.float64)
+            y_cls_trades = np.array(trade_y_cls, dtype=np.int64)
+            y_ret_trades = np.array(trade_y_ret, dtype=np.float64)
+            X_unified = np.vstack([X_macro, X_trades])
+            y_cls_unified = np.concatenate([y_cls_macro, y_cls_trades])
+            y_ret_unified = np.concatenate([y_ret_macro, y_ret_trades])
+        else:
+            X_trades = np.empty((0, 16))
+            y_cls_trades = np.empty((0,), dtype=np.int64)
+            y_ret_trades = np.empty((0,), dtype=np.float64)
+            X_unified = X_macro
+            y_cls_unified = y_cls_macro
+            y_ret_unified = y_ret_macro
+
+        # Shuffle indices for balanced training
+        shuffled_idx = np.arange(len(X_unified))
+        rng.shuffle(shuffled_idx)
+        X_train = X_unified[shuffled_idx]
+        y_cls_train = y_cls_unified[shuffled_idx]
+        y_ret_train = y_ret_unified[shuffled_idx]
+
+        # 3. Fit unified DeepTradingNN model
+        metrics = self.model.fit(X_train, y_cls_train, y_ret_train, epochs=epochs, lr=lr)
+
+        # 4. Measure validation sub-accuracies
+        probs_macro, _, _ = self.model.forward(X_macro)
+        acc_macro = float(np.mean(np.argmax(probs_macro, axis=1) == y_cls_macro)) if len(X_macro) > 0 else 0.0
+
+        if len(X_trades) > 0:
+            probs_trades, _, _ = self.model.forward(X_trades)
+            acc_trades = float(np.mean(np.argmax(probs_trades, axis=1) == y_cls_trades))
+        else:
+            acc_trades = 0.0
+
+        probs_unified, _, _ = self.model.forward(X_unified)
+        acc_unified = float(np.mean(np.argmax(probs_unified, axis=1) == y_cls_unified))
+
+        # 5. Persist unified weights
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.model.save_weights(target_path)
+            weights_saved = True
+        except Exception as exc:
+            bot_logger.warning(f"[NeuralNet] Failed to save unified weights: {exc}")
+            weights_saved = False
+
+        record = {
+            "timestamp": timestamp_now(),
+            "event": "UNIFIED_MODEL_TRAINING",
+            "total_samples": len(X_unified),
+            "macro_samples": len(X_macro),
+            "trade_samples": len(X_trades),
+            "epochs": epochs,
+            "loss": metrics["loss"],
+            "overall_accuracy": round(acc_unified * 100, 2),
+            "macro_accuracy": round(acc_macro * 100, 2),
+            "trade_accuracy": round(acc_trades * 100, 2),
+            "train_steps": self.model.train_steps,
+            "weights_file": str(target_path.name),
+        }
+        self._learning_history.append(record)
+        if len(self._learning_history) > 100:
+            self._learning_history = self._learning_history[-100:]
+
+        bot_logger.info(
+            f"[NeuralNet][UnifiedModel] Trained unified model on {len(X_unified)} samples "
+            f"({len(X_macro)} macro, {len(X_trades)} trades) over {epochs} epochs -> "
+            f"Loss: {metrics['loss']:.4f}, Overall Acc: {acc_unified*100:.2f}% "
+            f"(Macro: {acc_macro*100:.2f}%, Trade: {acc_trades*100:.2f}%). "
+            f"Weights saved to {target_path}"
+        )
+
+        return {
+            "status": "success",
+            "weights_file": str(target_path.name),
+            "weights_path": str(target_path.resolve()),
+            "total_samples": len(X_unified),
+            "macro_samples": len(X_macro),
+            "trade_samples": len(X_trades),
+            "trades_count": len(trades),
+            "wins_count": wins_count,
+            "loss_count": loss_count,
+            "epochs": epochs,
+            "learning_rate": lr,
+            "loss": metrics["loss"],
+            "overall_accuracy": acc_unified,
+            "macro_accuracy": acc_macro,
+            "trade_accuracy": acc_trades,
+            "train_steps": self.model.train_steps,
+            "weights_saved": weights_saved,
+        }
+
 
     def learn_from_trade(self, trade, pnl_pct: float) -> Optional[Dict[str, Any]]:
         """

@@ -12,7 +12,7 @@ import {
   Play,
   CheckCircle2,
 } from 'lucide-react';
-import { getNeuralLiveBrain, trainNeuralNetwork, updateStrategy } from '../utils/api';
+import { getNeuralLiveBrain, trainNeuralNetwork, combineNeuralModels, updateStrategy } from '../utils/api';
 
 const FEATURE_DESCRIPTIONS = {
   rsi_norm: 'RSI (Normalized -1 to +1)',
@@ -41,7 +41,10 @@ export default function NeuralBrain() {
   const [isFiring, setIsFiring] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrateStatus, setCalibrateStatus] = useState('');
+  const [isCombining, setIsCombining] = useState(false);
+  const [combineStatus, setCombineStatus] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
+
 
   const pairs = ['BTC/INR', 'ETH/INR', 'SOL/INR', 'XRP/INR', 'BNB/INR'];
 
@@ -86,6 +89,27 @@ export default function NeuralBrain() {
     } finally {
       setIsCalibrating(false);
       setTimeout(() => setCalibrateStatus(''), 5000);
+    }
+  };
+
+  const handleCombineModels = async () => {
+    setIsCombining(true);
+    setCombineStatus('Combining 24-month CoinDCX macro data & closed trade experience into unified model...');
+    try {
+      const res = await combineNeuralModels({ days: 730, epochs: 100, learning_rate: 0.005 });
+      const r = res.data?.result || {};
+      setCombineStatus(
+        `Unified Model Trained! Overall Acc: ${((r.overall_accuracy || 0) * 100).toFixed(1)}% | ` +
+        `Trade Acc: ${((r.trade_accuracy || 0) * 100).toFixed(1)}% | ` +
+        `Macro Acc: ${((r.macro_accuracy || 0) * 100).toFixed(1)}% | ` +
+        `Loss: ${(r.loss || 0).toFixed(4)}`
+      );
+      await fetchBrain(selectedPair);
+    } catch (err) {
+      setCombineStatus('Model combination failed: ' + (err?.response?.data?.detail || err.message));
+    } finally {
+      setIsCombining(false);
+      setTimeout(() => setCombineStatus(''), 8000);
     }
   };
 
@@ -151,6 +175,16 @@ export default function NeuralBrain() {
             Pulse Synapses
           </button>
 
+          {/* Combine & Train Unified Model */}
+          <button
+            onClick={handleCombineModels}
+            disabled={isCombining}
+            className="px-3 py-2 rounded-lg text-xs font-bold bg-purple-500/20 border border-purple-500/50 text-purple-300 hover:text-white hover:bg-purple-500/30 transition-all flex items-center gap-1.5 shadow-[0_0_12px_rgba(168,85,247,0.2)]"
+          >
+            <Layers size={14} className={isCombining ? 'animate-spin' : ''} />
+            {isCombining ? 'Combining...' : 'Combine Models'}
+          </button>
+
           {/* Train/Calibrate */}
           <button
             onClick={handleCalibrate}
@@ -169,6 +203,14 @@ export default function NeuralBrain() {
           {calibrateStatus}
         </div>
       )}
+
+      {combineStatus && (
+        <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-300 text-xs font-mono animate-fade-in flex items-center gap-2">
+          <Layers size={14} className={isCombining ? 'animate-spin' : ''} />
+          {combineStatus}
+        </div>
+      )}
+
 
       {/* Capital Preservation & Survival Health Banner */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
