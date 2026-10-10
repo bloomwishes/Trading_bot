@@ -13,6 +13,7 @@ Comprehensive test suite verifying:
 
 import json
 import os
+from pathlib import Path
 import tempfile
 import unittest
 import numpy as np
@@ -297,6 +298,58 @@ class TestNeuralNetworkActiveAndBrain(unittest.TestCase):
         diag2 = brain2.get("diagnostics", {})
         self.assertFalse(diag2["differs_from_previous"])
         self.assertEqual(diag1["input_vector_hash"], diag2["input_vector_hash"])
+
+    def test_09_manual_experimental_training_and_live_weights_preservation(self):
+        """Verify experimental training on historical data preserves live model weights and thresholds."""
+        from backend.engine.neural_net_strategy import WEIGHTS_PATH, EXPERIMENTAL_WEIGHTS_PATH
+        from backend.main import app
+        import tempfile
+
+        # Verify live model weights exist
+        self.assertTrue(WEIGHTS_PATH.exists(), "Live weights file must exist")
+        live_mtime_before = WEIGHTS_PATH.stat().st_mtime
+
+        # Verify live strategy parameters have auto_train and online_adapt disabled by default
+        strat = NeuralNetworkStrategy()
+        self.assertFalse(strat.params.get("auto_train", False), "auto_train must be disabled by default")
+        self.assertFalse(strat.params.get("online_adapt", False), "online_adapt must be disabled by default")
+
+        # Test experimental training with synthetic candles into a temporary path
+        df_hist = generate_synthetic_candles(150, trend="bullish")
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp_file:
+            tmp_path = Path(tmp_file.name)
+
+        try:
+            res = strat.train_experimental_dataset(
+                df=df_hist,
+                horizon_bars=3,
+                return_threshold_pct=0.5,
+                epochs=5,
+                save_path=tmp_path,
+            )
+            self.assertEqual(res["status"], "success")
+            self.assertFalse(res["live_model_touched"])
+            self.assertIn("HOLD", res["label_distribution"])
+            self.assertIn("BUY", res["label_distribution"])
+            self.assertIn("SELL", res["label_distribution"])
+            self.assertTrue(tmp_path.exists())
+
+            # Verify live weights file was untouched
+            live_mtime_after = WEIGHTS_PATH.stat().st_mtime
+            self.assertEqual(live_mtime_before, live_mtime_after, "Live weights file must not be modified")
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+        # Test experimental training API endpoint
+        with TestClient(app) as client:
+            api_res = client.post("/api/strategies/neural_network/train_experimental?days=120&epochs=2&horizon_bars=2")
+            self.assertEqual(api_res.status_code, 200)
+            data = api_res.json()
+            self.assertIn("result", data)
+            self.assertEqual(data["result"]["status"], "success")
+            self.assertFalse(data["result"]["live_model_touched"])
+            self.assertTrue(EXPERIMENTAL_WEIGHTS_PATH.exists())
 
 
 if __name__ == "__main__":

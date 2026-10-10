@@ -219,6 +219,45 @@ async def train_neural_network_on_history(
     }
 
 
+@router.post("/neural_network/train_experimental", summary="Manually train experimental neural network on 24 months CoinDCX data")
+async def train_neural_network_experimental(
+    request: Request,
+    days: int = Query(730, ge=30, le=1000, description="Number of daily candles (730 = 24 months)"),
+    epochs: int = Query(40, ge=1, le=200, description="Training epochs"),
+    horizon_bars: int = Query(5, ge=1, le=30, description="Forward return horizon bars"),
+    return_threshold_pct: float = Query(2.0, ge=0.1, le=15.0, description="Return threshold % for BUY/SELL labels"),
+    learning_rate: float = Query(0.005, ge=0.0001, le=0.1, description="Learning rate"),
+) -> dict[str, Any]:
+    """
+    Manually triggered training on CoinDCX 24 months historical BTC/INR data.
+    Generates 16 features, creates explicit HOLD/BUY/SELL labels, and saves
+    to nn_weights_experimental.json without touching live model or live thresholds.
+    """
+    engine = request.app.state.engine
+    nn_strategy = next(
+        (s for s in engine.strategies if s.name == "Neural_Network"), None
+    )
+    if nn_strategy is None:
+        raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
+
+    # Fetch 24 months daily candles from CoinDCX
+    df = engine.exchange_manager.get_candles(pair="BTC/INR", interval="1d", limit=days)
+    if df is None or len(df) < 30:
+        raise HTTPException(status_code=400, detail="Failed to fetch sufficient historical candle data from CoinDCX")
+
+    result = nn_strategy.train_experimental_dataset(
+        df=df,
+        horizon_bars=horizon_bars,
+        return_threshold_pct=return_threshold_pct,
+        epochs=epochs,
+        lr=learning_rate,
+    )
+    return {
+        "message": "Manual experimental training complete on 24 months CoinDCX BTC/INR data. Live weights preserved.",
+        "result": result,
+    }
+
+
 @router.get("/neural_network/live_brain", summary="Get real-time layer activations and firing synapses")
 async def get_neural_live_brain(request: Request, pair: str = "BTC/INR") -> dict[str, Any]:
     """

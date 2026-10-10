@@ -42,6 +42,7 @@ from backend.utils.logger import bot_logger
 from backend.utils.helpers import timestamp_now
 
 WEIGHTS_PATH = Path(__file__).parent / "nn_weights.json"
+EXPERIMENTAL_WEIGHTS_PATH = Path(__file__).parent / "nn_weights_experimental.json"
 
 
 class NeuralNetworkStrategy(StrategyBase):
@@ -67,8 +68,8 @@ class NeuralNetworkStrategy(StrategyBase):
         "return_threshold_pct": 0.6,
         "learning_rate": 0.005,
         "train_epochs": 25,
-        "auto_train": True,
-        "online_adapt": True,
+        "auto_train": False,
+        "online_adapt": False,
         "stop_loss_atr_mult": 1.5,
         "take_profit_atr_mult": 2.5,
     }
@@ -413,6 +414,73 @@ class NeuralNetworkStrategy(StrategyBase):
             "weights_saved": True,
         }
 
+    def train_experimental_dataset(
+        self,
+        df: pd.DataFrame,
+        horizon_bars: int = 5,
+        return_threshold_pct: float = 2.0,
+        epochs: int = 40,
+        lr: float = 0.005,
+        save_path: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """
+        Train an experimental clone of the DeepTradingNN architecture on historical candles
+        (e.g., 24 months of CoinDCX BTC/INR data) and save to EXPERIMENTAL_WEIGHTS_PATH.
+        Does NOT modify or overwrite the live model weights or live parameters.
+        """
+        target_path = save_path or EXPERIMENTAL_WEIGHTS_PATH
+
+        X, y_cls, y_ret = build_training_dataset(
+            df, horizon_bars=horizon_bars, return_threshold_pct=return_threshold_pct
+        )
+        if len(X) < 10:
+            return {
+                "status": "failed",
+                "reason": "Insufficient candles to extract training features and labels",
+                "samples": len(X),
+            }
+
+        # Instantiate separate experimental neural network (clone of live architecture)
+        exp_model = DeepTradingNN(seed=42)
+        metrics = exp_model.fit(X, y_cls, y_ret, epochs=epochs, lr=lr)
+
+        # Save ONLY to the experimental weights path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        exp_model.save_weights(target_path)
+
+        hold_count = int(np.sum(y_cls == 0))
+        buy_count = int(np.sum(y_cls == 1))
+        sell_count = int(np.sum(y_cls == 2))
+
+        bot_logger.info(
+            f"[NeuralNet][Experimental] Trained on {len(X)} samples over {epochs} epochs "
+            f"-> Loss: {metrics['loss']:.4f}, Accuracy: {metrics['accuracy']*100:.1f}%. "
+            f"Saved to {target_path}"
+        )
+
+        return {
+            "status": "success",
+            "model_architecture": "16 -> 64 -> 32 -> DualHead(3-Class + Return)",
+            "weights_file": str(target_path.name),
+            "weights_path": str(target_path.resolve()),
+            "total_candles": len(df),
+            "total_samples": len(X),
+            "features_count": X.shape[1],
+            "horizon_bars": horizon_bars,
+            "return_threshold_pct": return_threshold_pct,
+            "label_distribution": {
+                "HOLD": hold_count,
+                "BUY": buy_count,
+                "SELL": sell_count,
+            },
+            "epochs": epochs,
+            "learning_rate": lr,
+            "loss": metrics["loss"],
+            "accuracy": metrics["accuracy"],
+            "train_steps": metrics["train_steps"],
+            "live_model_touched": False,
+        }
+
     def learn_from_trade(self, trade, pnl_pct: float) -> Optional[Dict[str, Any]]:
         """
         Closed-trade reinforcement learning loop.
@@ -471,16 +539,16 @@ class NeuralNetworkStrategy(StrategyBase):
         try:
             self._latest_candles_by_pair[pair] = df
 
-            # Auto-calibrate on first encounter
+            # Auto-calibrate strictly disabled during live trading (only manual command)
             if (
-                self.params.get("auto_train", True)
+                self.params.get("auto_train", False)
                 and self.model.train_steps == 0
                 and len(df) >= 60
             ):
                 self.train_on_candles(df, pair=pair)
 
-            # Continuous online adaptation step on latest regime
-            if self.params.get("online_adapt", True) and len(df) >= 70 and (self._total_predictions % 10 == 0):
+            # Continuous online adaptation strictly disabled by default (only manual command)
+            if self.params.get("online_adapt", False) and len(df) >= 70 and (self._total_predictions % 10 == 0):
                 X_recent, y_cls_recent, y_ret_recent = build_training_dataset(
                     df.tail(40), horizon_bars=2, return_threshold_pct=0.4
                 )
