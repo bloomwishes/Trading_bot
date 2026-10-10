@@ -61,6 +61,7 @@ class BotScheduler:
             "check_stops": None,
             "scan_opportunities": None,
             "portfolio_snapshot": None,
+            "refresh_market_data": None,
         }
 
         self._register_jobs()
@@ -70,6 +71,15 @@ class BotScheduler:
     # ------------------------------------------------------------------
     def _register_jobs(self):
         """Add all periodic jobs to the scheduler."""
+        candle_refresh_sec = int(getattr(settings, "CANDLE_CACHE_TTL_SEC", 15))
+        self.scheduler.add_job(
+            func=self._job_refresh_market_data,
+            trigger=IntervalTrigger(seconds=candle_refresh_sec),
+            id="refresh_market_data",
+            name="Shared Market Data Refresh",
+            replace_existing=True,
+        )
+
         self.scheduler.add_job(
             func=self._job_main_cycle,
             trigger=IntervalTrigger(seconds=60),
@@ -105,6 +115,28 @@ class BotScheduler:
     # ------------------------------------------------------------------
     # Job implementations (each wrapped in try/except)
     # ------------------------------------------------------------------
+    def _job_refresh_market_data(self):
+        """Pre-emptively warm and refresh live candles for active pairs in the background."""
+        if self._paused:
+            return
+        try:
+            pairs = self._get_watchlist()
+            for pair in pairs:
+                try:
+                    df, meta = self.trading_engine.exchange_manager.get_candles_with_meta(
+                        pair=pair, interval="15m", limit=100
+                    )
+                    # Update neural network strategy latest candle store for 0ms endpoint response
+                    for s in self.trading_engine.strategies:
+                        if s.name == "Neural_Network" and hasattr(s, "_latest_candles_by_pair"):
+                            s._latest_candles_by_pair[pair] = df
+                            s._latest_candle_meta[pair] = meta
+                except Exception as p_err:
+                    bot_logger.debug(f"[Scheduler] Market data refresh error on {pair}: {p_err}")
+            self._last_run["refresh_market_data"] = timestamp_now()
+        except Exception as e:
+            bot_logger.warning(f"[Scheduler] Market data refresh job failed: {e}")
+
     def _job_main_cycle(self):
         """Run the full trading engine cycle on watched pairs."""
         if self._paused:

@@ -246,6 +246,58 @@ class TestNeuralNetworkActiveAndBrain(unittest.TestCase):
         finally:
             db.close()
 
+    def test_08_market_data_freshness_and_diagnostics(self):
+        """Verify configurable cache TTL, single-flight locking, and feature instrumentation."""
+        from backend.exchange.exchange_manager import ExchangeManager
+        import concurrent.futures
+
+        em = ExchangeManager(candle_ttl=10)
+        self.assertEqual(em.candle_ttl, 10)
+
+        # 1. First fetch: cache miss
+        df1, meta1 = em.get_candles_with_meta("BTC/INR", "15m", 100)
+        self.assertFalse(meta1["is_cache_hit"])
+        self.assertEqual(meta1["cache_age_seconds"], 0.0)
+
+        # 2. Second fetch: cache hit
+        df2, meta2 = em.get_candles_with_meta("BTC/INR", "15m", 100)
+        self.assertTrue(meta2["is_cache_hit"])
+        self.assertGreaterEqual(meta2["cache_age_seconds"], 0.0)
+        self.assertEqual(meta1["fetch_timestamp"], meta2["fetch_timestamp"])
+
+        # 3. Single-flight concurrent fetches
+        def fetch_task():
+            return em.get_candles_with_meta("BTC/INR", "15m", 100)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(fetch_task) for _ in range(5)]
+            results = [f.result() for f in futures]
+
+        for df_res, meta_res in results:
+            self.assertEqual(len(df_res), len(df1))
+            self.assertTrue(meta_res["is_cache_hit"])
+
+        # 4. Neural Network Strategy diagnostics instrumentation
+        strat = NeuralNetworkStrategy()
+        strat._latest_candles_by_pair["BTC/INR"] = df1
+        strat._latest_candle_meta["BTC/INR"] = meta1
+
+        brain1 = strat.get_live_brain_state("BTC/INR")
+        diag1 = brain1.get("diagnostics", {})
+        self.assertIn("fetch_timestamp", diag1)
+        self.assertIn("cache_age_seconds", diag1)
+        self.assertIn("input_vector_hash", diag1)
+        self.assertTrue(diag1["differs_from_previous"])
+        self.assertEqual(len(diag1["raw_features"]), 16)
+        self.assertEqual(len(diag1["normalized_features"]), 16)
+
+        # 5. Subsequent inference on same data
+        strat._latest_candle_meta["BTC/INR"] = meta2
+        brain2 = strat.get_live_brain_state("BTC/INR")
+        diag2 = brain2.get("diagnostics", {})
+        self.assertFalse(diag2["differs_from_previous"])
+        self.assertEqual(diag1["input_vector_hash"], diag2["input_vector_hash"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

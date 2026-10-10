@@ -60,6 +60,10 @@ class Settings:
         "BNB/INR",
     ]
 
+    # ── Market Data Cache ──────────────────────────────────────────────
+    CANDLE_CACHE_TTL_SEC: int = int(os.getenv("CANDLE_CACHE_TTL_SEC", "15"))
+    MARKET_DATA_CACHE_TTL_SEC: int = int(os.getenv("MARKET_DATA_CACHE_TTL_SEC", "15"))
+
     # ── Paths ──────────────────────────────────────────────────────────
     PROJECT_ROOT: Path = PROJECT_ROOT
     DB_PATH: str = str(PROJECT_ROOT / "autotrader.db")
