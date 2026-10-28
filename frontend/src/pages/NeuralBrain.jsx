@@ -12,7 +12,7 @@ import {
   Play,
   CheckCircle2,
 } from 'lucide-react';
-import { getNeuralLiveBrain, trainNeuralNetwork, combineNeuralModels, updateStrategy } from '../utils/api';
+import { getNeuralLiveBrain, getNeuralLiveBrains, trainNeuralNetwork, combineNeuralModels, updateStrategy } from '../utils/api';
 
 const FEATURE_DESCRIPTIONS = {
   rsi_norm: 'RSI (Normalized -1 to +1)',
@@ -33,9 +33,38 @@ const FEATURE_DESCRIPTIONS = {
   mom_3bar_pct: '3-Candle Momentum Return %',
 };
 
+const BRAIN_MODELS = [
+  {
+    id: 'Neural_Network_BTC',
+    name: 'BTC Neural Engine',
+    tag: 'Macro 10Y Specialist',
+    color: 'from-amber-500/20 to-orange-500/10 border-orange-500/40 text-orange-400',
+    pairs: ['BTC/INR'],
+    description: 'Trained on 10 Years of Bitcoin market cycles, multi-horizon trends & real closed trade experience.',
+  },
+  {
+    id: 'Neural_Network_ETH',
+    name: 'ETH Neural Engine',
+    tag: 'Ethereum Specialist',
+    color: 'from-blue-500/20 to-indigo-500/10 border-indigo-500/40 text-indigo-400',
+    pairs: ['ETH/INR'],
+    description: 'Trained completely on historical Ethereum cycles (3,250+ daily candles & 17,350+ hourly microstructure).',
+  },
+  {
+    id: 'Neural_Network_ALTS',
+    name: 'Altcoins Neural Engine',
+    tag: 'Major Alts Basket',
+    color: 'from-purple-500/20 to-pink-500/10 border-purple-500/40 text-purple-400',
+    pairs: ['SOL/INR', 'XRP/INR', 'BNB/INR'],
+    description: 'Trained on multi-token volatility structure across Solana, Ripple, BNB, DOGE, ADA & LINK (192,100+ samples).',
+  },
+];
+
 export default function NeuralBrain() {
+  const [activeModelId, setActiveModelId] = useState('Neural_Network_BTC');
   const [selectedPair, setSelectedPair] = useState('BTC/INR');
   const [brainData, setBrainData] = useState(null);
+  const [allBrainsData, setAllBrainsData] = useState({});
   const [capitalHealth, setCapitalHealth] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isFiring, setIsFiring] = useState(false);
@@ -45,15 +74,34 @@ export default function NeuralBrain() {
   const [combineStatus, setCombineStatus] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  // Switch active model when pair changes or vice-versa
+  const handleModelSelect = (model) => {
+    setActiveModelId(model.id);
+    if (!model.pairs.includes(selectedPair)) {
+      setSelectedPair(model.pairs[0]);
+    }
+  };
 
-  const pairs = ['BTC/INR', 'ETH/INR', 'SOL/INR', 'XRP/INR', 'BNB/INR'];
+  const handlePairChange = (newPair) => {
+    setSelectedPair(newPair);
+    const parentModel = BRAIN_MODELS.find((m) => m.pairs.includes(newPair));
+    if (parentModel) {
+      setActiveModelId(parentModel.id);
+    }
+  };
 
-  const fetchBrain = async (pair = selectedPair) => {
+  const fetchBrain = async (pair = selectedPair, model = activeModelId) => {
     try {
-      const res = await getNeuralLiveBrain(pair);
-      if (res.data) {
-        setBrainData(res.data.brain || null);
-        setCapitalHealth(res.data.capital_health || null);
+      const [resSingle, resAll] = await Promise.allSettled([
+        getNeuralLiveBrain(pair, model),
+        getNeuralLiveBrains(),
+      ]);
+      if (resSingle.status === 'fulfilled' && resSingle.value.data) {
+        setBrainData(resSingle.value.data.brain || null);
+        setCapitalHealth(resSingle.value.data.capital_health || null);
+      }
+      if (resAll.status === 'fulfilled' && resAll.value.data?.models) {
+        setAllBrainsData(resAll.value.data.models);
       }
     } catch (err) {
       console.error('Failed to fetch neural brain:', err);
@@ -63,13 +111,13 @@ export default function NeuralBrain() {
   };
 
   useEffect(() => {
-    fetchBrain(selectedPair);
+    fetchBrain(selectedPair, activeModelId);
     if (!autoRefresh) return;
     const interval = setInterval(() => {
-      fetchBrain(selectedPair);
+      fetchBrain(selectedPair, activeModelId);
     }, 4000);
     return () => clearInterval(interval);
-  }, [selectedPair, autoRefresh]);
+  }, [selectedPair, activeModelId, autoRefresh]);
 
   const handleFireSynapses = async () => {
     setIsFiring(true);
@@ -126,6 +174,79 @@ export default function NeuralBrain() {
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
+      {/* Model Selection Tabs */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {BRAIN_MODELS.map((model) => {
+          const isSelected = activeModelId === model.id;
+          return (
+            <button
+              key={model.id}
+              onClick={() => handleModelSelect(model)}
+              className={`p-4 rounded-xl text-left border transition-all relative overflow-hidden ${
+                isSelected
+                  ? `bg-gradient-to-br ${model.color} shadow-lg shadow-black/40 ring-1 ring-white/20`
+                  : 'bg-cyber-surface/60 border-gray-800 hover:border-gray-700 opacity-70 hover:opacity-100'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-black/40 border border-white/10 text-white">
+                  {model.tag}
+                </span>
+                {isSelected && (
+                  <span className="flex h-2 w-2 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-neon-green opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-neon-green"></span>
+                  </span>
+                )}
+              </div>
+              <h3 className="text-base font-bold text-white mt-2 font-heading">{model.name}</h3>
+              <p className="text-[11px] text-gray-400 mt-1 line-clamp-2 leading-relaxed">
+                {model.description}
+              </p>
+
+              {/* Live Simultaneous Telemetry Badge */}
+              {allBrainsData[model.id] && (
+                <div className="mt-3 flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-black/40 border border-white/5 text-[11px] font-mono">
+                  <span className="text-gray-400">Live Decision:</span>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`font-bold ${
+                        allBrainsData[model.id].action === 'BUY'
+                          ? 'text-neon-green'
+                          : allBrainsData[model.id].action === 'SELL'
+                          ? 'text-neon-pink'
+                          : 'text-gray-300'
+                      }`}
+                    >
+                      {allBrainsData[model.id].action}
+                    </span>
+                    <span className="text-neon-cyan">
+                      {(allBrainsData[model.id].confidence * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5 mt-3 pt-2 border-t border-white/10">
+                <span className="text-[10px] text-gray-400 font-mono">Pairs:</span>
+                {model.pairs.map((p) => (
+                  <span
+                    key={p}
+                    className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${
+                      selectedPair === p
+                        ? 'bg-neon-cyan text-black font-bold'
+                        : 'bg-cyber-bg text-gray-300 border border-gray-700'
+                    }`}
+                  >
+                    {p}
+                  </span>
+                ))}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Top Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
@@ -138,7 +259,7 @@ export default function NeuralBrain() {
                 Neural <span className="text-neon-cyan">Brain Visualizer</span>
               </h1>
               <p className="text-gray-400 text-xs sm:text-sm">
-                Real-time biological neuron firing, activation maps & continuous adaptive learning
+                Viewing: <span className="text-neon-cyan font-bold font-mono">{brain.model_name || activeModelId}</span> on <span className="text-white font-mono">{selectedPair}</span>
               </p>
             </div>
           </div>
@@ -146,13 +267,13 @@ export default function NeuralBrain() {
 
         {/* Controls Toolbar */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Pair Selector */}
+          {/* Pair Selector for Active Model */}
           <select
             value={selectedPair}
-            onChange={(e) => setSelectedPair(e.target.value)}
+            onChange={(e) => handlePairChange(e.target.value)}
             className="bg-cyber-surface border border-gray-700 rounded-lg px-3 py-2 text-xs font-semibold text-white focus:border-neon-cyan focus:outline-none"
           >
-            {pairs.map((p) => (
+            {BRAIN_MODELS.find((m) => m.id === activeModelId)?.pairs.map((p) => (
               <option key={p} value={p}>
                 {p}
               </option>

@@ -16,6 +16,7 @@ import pandas as pd
 from backend.config import settings
 from backend.exchange.coindcx import CoinDCXClient
 from backend.exchange.binance_fallback import BinanceFallbackClient
+from backend.exchange.websocket_client import CoinDCXWebSocketClient
 from backend.utils.logger import bot_logger
 
 
@@ -31,10 +32,17 @@ class ExchangeManager:
     DEFAULT_MARKET_TTL: int = int(getattr(settings, "MARKET_DATA_CACHE_TTL_SEC", 15))
     CACHE_TTL: int = 15  # backward-compatibility constant
 
-    def __init__(self, candle_ttl: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        candle_ttl: Optional[int] = None,
+        auto_start_ws: bool = True,
+    ) -> None:
         self.candle_ttl: int = candle_ttl or self.DEFAULT_CANDLE_TTL
         self.market_ttl: int = self.DEFAULT_MARKET_TTL
         self.CACHE_TTL: int = self.candle_ttl
+        self.watched_pairs: List[str] = list(
+            getattr(settings, "WATCHED_PAIRS", ["BTC/INR", "ETH/INR", "SOL/INR", "XRP/INR", "BNB/INR"])
+        )
 
         self._coindcx = CoinDCXClient(
             api_key=settings.COINDCX_API_KEY,
@@ -45,11 +53,48 @@ class ExchangeManager:
             api_secret=settings.BINANCE_API_SECRET,
         )
 
+        # Real-time WebSocket Client
+        self._ws = CoinDCXWebSocketClient(pairs=self.watched_pairs)
+        if auto_start_ws:
+            try:
+                self._ws.start_in_thread()
+            except Exception as e:
+                bot_logger.warning(f"Could not auto-start WebSocket client: {e}")
+
         # Simple in-memory cache: key → (mono_timestamp, data, utc_iso_fetch_time)
         self._cache: Dict[str, tuple[float, Any, str]] = {}
         self._cache_lock = threading.Lock()
         self._key_locks: Dict[str, threading.Lock] = {}
         self._key_locks_lock = threading.Lock()
+
+    @property
+    def is_ws_connected(self) -> bool:
+        """Return True if WebSocket feed is currently live."""
+        return self._ws.is_connected if self._ws else False
+
+    def start_websocket(self) -> None:
+        """Start the real-time WebSocket client thread if not running."""
+        if self._ws:
+            self._ws.start_in_thread()
+
+    def stop_websocket(self) -> None:
+        """Gracefully stop the WebSocket client."""
+        if self._ws:
+            self._ws.stop_thread()
+
+    def subscribe_pair(self, pair: str) -> None:
+        """Dynamically add pair to watchlist and WebSocket subscription."""
+        if pair not in self.watched_pairs:
+            self.watched_pairs.append(pair)
+        if self._ws:
+            self._ws.subscribe_pair(pair)
+
+    def unsubscribe_pair(self, pair: str) -> None:
+        """Dynamically remove pair from watchlist and WebSocket subscription."""
+        if pair in self.watched_pairs:
+            self.watched_pairs.remove(pair)
+        if self._ws:
+            self._ws.unsubscribe_pair(pair)
 
     def _get_key_lock(self, key: str) -> threading.Lock:
         with self._key_locks_lock:
@@ -122,6 +167,17 @@ class ExchangeManager:
         return data
 
     def get_ticker(self, pair: str) -> Dict[str, Any]:
+        """Return latest ticker for *pair*.
+
+        Checks WebSocket real-time feed first, falls back to REST cache.
+        """
+        # 1. Real-time WebSocket feed
+        if self._ws and self._ws.is_connected:
+            ws_ticker = self._ws.get_ticker(pair, max_age_seconds=15.0)
+            if ws_ticker and ws_ticker.get("last_price", 0) > 0:
+                return ws_ticker
+
+        # 2. REST cache fallback
         cache_key = f"ticker:{pair}"
         cached = self._cache_get(cache_key)
         if cached is not None:
@@ -129,6 +185,98 @@ class ExchangeManager:
         data = self._try_primary_then_fallback("get_ticker", pair)
         self._cache_set(cache_key, data)
         return data
+
+    def get_order_book(self, pair: str, limit: int = 20) -> Dict[str, Any]:
+        """Fetch top bids and asks (top 20) with quantities.
+
+        Uses real-time WebSocket feed if connected and fresh, falls back to REST.
+        """
+        # 1. Try WebSocket feed
+        if self._ws and self._ws.is_connected:
+            ws_ob = self._ws.get_order_book(pair, max_age_seconds=15.0)
+            if (
+                ws_ob
+                and len(ws_ob.get("bids", [])) > 0
+                and len(ws_ob.get("asks", [])) > 0
+            ):
+                return {
+                    "bids": ws_ob["bids"][:limit],
+                    "asks": ws_ob["asks"][:limit],
+                    "timestamp": ws_ob.get("timestamp"),
+                    "source": "websocket",
+                }
+
+        # 2. REST API fallback with concurrency lock
+        cache_key = f"orderbook:{pair}:{limit}"
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            return cached
+
+        key_lock = self._get_key_lock(cache_key)
+        with key_lock:
+            cached = self._cache_get(cache_key)
+            if cached is not None:
+                return cached
+
+            data = self._try_primary_then_fallback("get_order_book", pair, limit)
+            data["source"] = "rest"
+            self._cache_set_entry(cache_key, data)
+            return data
+
+    def get_order_book_imbalance(self, pair: str) -> float:
+        """Calculate Order Book Imbalance between top-20 bids and asks.
+
+        Formula:
+            (Bid_Volume - Ask_Volume) / (Bid_Volume + Ask_Volume)
+
+        Returns:
+            Float between -1.0 (all sell pressure) and +1.0 (all buy pressure).
+        """
+        try:
+            ob = self.get_order_book(pair, limit=20)
+            bids = ob.get("bids", [])
+            asks = ob.get("asks", [])
+            if not bids and not asks:
+                return 0.0
+
+            bid_vol = sum(float(b[1]) for b in bids)
+            ask_vol = sum(float(a[1]) for a in asks)
+            total_vol = bid_vol + ask_vol
+            if total_vol <= 0:
+                return 0.0
+
+            imbalance = (bid_vol - ask_vol) / total_vol
+            return round(max(-1.0, min(1.0, imbalance)), 4)
+        except Exception as exc:
+            bot_logger.error(
+                f"ExchangeManager: Error computing order book imbalance for {pair}: {exc}"
+            )
+            return 0.0
+
+    def get_spread_pct(self, pair: str) -> float:
+        """Calculate bid-ask spread as a percentage: ((ask - bid) / ask) * 100."""
+        try:
+            ob = self.get_order_book(pair, limit=1)
+            bids = ob.get("bids", [])
+            asks = ob.get("asks", [])
+            if bids and asks:
+                best_bid = float(bids[0][0])
+                best_ask = float(asks[0][0])
+                if best_ask > 0 and best_bid > 0 and best_ask >= best_bid:
+                    return round(((best_ask - best_bid) / best_ask) * 100.0, 4)
+
+            # Fallback to ticker bid/ask
+            ticker = self.get_ticker(pair)
+            bid = float(ticker.get("bid", 0.0))
+            ask = float(ticker.get("ask", 0.0))
+            if ask > 0 and bid > 0 and ask >= bid:
+                return round(((ask - bid) / ask) * 100.0, 4)
+            return 0.0
+        except Exception as exc:
+            bot_logger.error(
+                f"ExchangeManager: Error computing spread percentage for {pair}: {exc}"
+            )
+            return 0.0
 
     def get_candles_with_meta(
         self,
@@ -232,4 +380,4 @@ class ExchangeManager:
 # ---------------------------------------------------------------------------
 # Module-level singleton (lazy; created on first import)
 # ---------------------------------------------------------------------------
-exchange_manager = ExchangeManager()
+exchange_manager = ExchangeManager(auto_start_ws=False)

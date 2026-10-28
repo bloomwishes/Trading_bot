@@ -2,7 +2,8 @@
 AutoTrader Pro - Trading Engine Orchestrator
 =============================================
 Central orchestrator that coordinates all trading strategies, the exchange,
-risk management, paper trading, and database persistence.
+risk management, paper trading, smart order routing, unified position tracking,
+and database persistence.
 
 The engine's ``run_cycle()`` method is called periodically by the scheduler.
 It fetches market data, runs every enabled strategy, validates signals
@@ -11,6 +12,7 @@ everything to the database.
 """
 
 import json
+import time
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 
@@ -33,7 +35,26 @@ from backend.engine.rsi_divergence import RSIDivergenceStrategy
 from backend.engine.sentiment_llm import SentimentLLMStrategy
 from backend.engine.grid_trading import GridTradingStrategy
 from backend.engine.price_action import PriceActionStrategy
-from backend.engine.neural_net_strategy import NeuralNetworkStrategy
+from backend.engine.neural_net_strategy import (
+    NeuralNetworkStrategy,
+    WEIGHTS_PATH_BTC,
+    WEIGHTS_PATH_ETH,
+    WEIGHTS_PATH_ALTS,
+)
+from backend.engine.mean_reversion import MeanReversionStrategy
+from backend.engine.scalping import ScalpingStrategy
+from backend.engine.stat_arb import StatisticalArbitrageStrategy
+from backend.engine.signal_aggregator import SignalAggregator
+from backend.engine.order_router import SmartOrderRouter, OrderPlan
+from backend.engine.position_tracker import PositionTracker, Position
+
+try:
+    from backend.engine.regime_detector import MarketRegimeDetector, regime_detector
+except ImportError:
+    class MarketRegimeDetector:
+        def detect(self, pair: str, df: Any) -> Dict[str, Any]:
+            return {"pair": pair, "regime": "NEUTRAL", "confidence": 0.5}
+    regime_detector = MarketRegimeDetector()
 
 
 class TradingEngine:
@@ -47,6 +68,8 @@ class TradingEngine:
         exchange_manager (ExchangeManager): Market data and order execution.
         risk_manager (RiskManager): Position sizing and risk controls.
         paper_trader (PaperTrader): Paper-trade execution engine.
+        order_router (SmartOrderRouter): Smart order routing and TWAP chunking.
+        position_tracker (PositionTracker): Unified net position and exposure tracking.
     """
 
     def __init__(
@@ -73,6 +96,11 @@ class TradingEngine:
         self.risk_manager = risk_manager or RiskManager()
         self.paper_trader = paper_trader or PaperTrader()
 
+        # -- Smart Order Router & Unified Position Tracker (Agent 3) --
+        self.order_router = SmartOrderRouter()
+        self.position_tracker = PositionTracker()
+        self._init_position_tracker()
+
         # -- Strategies --
         self.strategies: List[StrategyBase] = [
             MAPullbackStrategy(),
@@ -81,8 +109,42 @@ class TradingEngine:
             SentimentLLMStrategy(),
             GridTradingStrategy(),
             PriceActionStrategy(),
-            NeuralNetworkStrategy(),
+            # 1. Dedicated BTC Neural Model (10 Years Macro + DB)
+            NeuralNetworkStrategy(
+                name="Neural_Network_BTC",
+                weights_path=WEIGHTS_PATH_BTC,
+                pair_filter=["BTC/INR"],
+            ),
+            # 2. Dedicated ETH Neural Model (3,250+ Daily + Hourly Macro)
+            NeuralNetworkStrategy(
+                name="Neural_Network_ETH",
+                weights_path=WEIGHTS_PATH_ETH,
+                pair_filter=["ETH/INR"],
+            ),
+            # 3. Dedicated Major Altcoins Neural Model (SOL, XRP, BNB)
+            NeuralNetworkStrategy(
+                name="Neural_Network_ALTS",
+                weights_path=WEIGHTS_PATH_ALTS,
+                pair_filter=["SOL/INR", "XRP/INR", "BNB/INR"],
+            ),
+            # 4. Mean Reversion
+            MeanReversionStrategy(),
+            # 5. Scalping
+            ScalpingStrategy(exchange_manager=self.exchange_manager),
+            # 6. Statistical Arbitrage
+            StatisticalArbitrageStrategy(exchange_manager=self.exchange_manager),
         ]
+        # All strategies enabled by default; signal aggregator handles conflicts
+        for s in self.strategies:
+            s.enable()
+
+        # -- Signal Aggregator & Regime Detection --
+        self.signal_aggregator = SignalAggregator()
+        self.regime_detector = regime_detector
+
+        # -- Strategy Performance Tracking --
+        self.strategy_performance: Dict[str, Dict[str, Any]] = {}
+        self._init_strategy_performance()
 
         # -- Cycle stats --
         self._last_cycle_time: Optional[str] = None
@@ -93,13 +155,92 @@ class TradingEngine:
             f"strategies={[s.name for s in self.strategies]}"
         )
 
+    def _init_position_tracker(self) -> None:
+        """Synchronize position tracker with open trades from database."""
+        db = SessionLocal()
+        try:
+            open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+            self.position_tracker.sync_from_trades(open_trades)
+            if open_trades:
+                bot_logger.info(
+                    f"[Engine] PositionTracker synchronized with {len(open_trades)} open trade(s)"
+                )
+        except Exception as exc:
+            bot_logger.error(f"[Engine] Failed to initialize PositionTracker: {exc}")
+        finally:
+            db.close()
+
+    def _init_strategy_performance(self) -> None:
+        """Initialize per-strategy performance metrics from closed trades in the database."""
+        db = SessionLocal()
+        try:
+            closed_trades = db.query(Trade).filter(Trade.status == "CLOSED").all()
+            by_strategy: Dict[str, List[Trade]] = {}
+            for t in closed_trades:
+                strat = t.strategy or "Unknown"
+                by_strategy.setdefault(strat, []).append(t)
+
+            for s in self.strategies:
+                trades = by_strategy.get(s.name, [])
+                total = len(trades)
+                wins = sum(1 for t in trades if (t.pnl or 0) > 0)
+                losses = sum(1 for t in trades if (t.pnl or 0) <= 0)
+                win_rate = round(wins / total, 4) if total > 0 else 0.50
+                avg_pnl = round(sum(float(t.pnl or 0) for t in trades) / total, 2) if total > 0 else 0.0
+
+                gross_profit = sum(float(t.pnl or 0) for t in trades if (t.pnl or 0) > 0)
+                gross_loss = abs(sum(float(t.pnl or 0) for t in trades if (t.pnl or 0) < 0))
+                profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (round(gross_profit, 2) if gross_profit > 0 else 1.0)
+
+                self.strategy_performance[s.name] = {
+                    "total_trades": total,
+                    "wins": wins,
+                    "losses": losses,
+                    "win_rate": win_rate,
+                    "avg_pnl": avg_pnl,
+                    "profit_factor": profit_factor,
+                }
+        except Exception as exc:
+            bot_logger.error(f"[Engine] Failed to initialize strategy performance: {exc}")
+        finally:
+            db.close()
+
+    def _update_strategy_performance_on_close(self, strategy_name: str, pnl: float, db) -> None:
+        """Update historical performance metrics for strategy_name after a closed trade."""
+        if not strategy_name:
+            return
+        try:
+            trades = db.query(Trade).filter(Trade.status == "CLOSED", Trade.strategy == strategy_name).all()
+            total = len(trades)
+            wins = sum(1 for t in trades if (t.pnl or 0) > 0)
+            losses = sum(1 for t in trades if (t.pnl or 0) <= 0)
+            win_rate = round(wins / total, 4) if total > 0 else 0.50
+            avg_pnl = round(sum(float(t.pnl or 0) for t in trades) / total, 2) if total > 0 else 0.0
+
+            gross_profit = sum(float(t.pnl or 0) for t in trades if (t.pnl or 0) > 0)
+            gross_loss = abs(sum(float(t.pnl or 0) for t in trades if (t.pnl or 0) < 0))
+            profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (round(gross_profit, 2) if gross_profit > 0 else 1.0)
+
+            self.strategy_performance[strategy_name] = {
+                "total_trades": total,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": win_rate,
+                "avg_pnl": avg_pnl,
+                "profit_factor": profit_factor,
+            }
+        except Exception as exc:
+            bot_logger.error(f"[Engine] Error updating strategy performance for {strategy_name}: {exc}")
+
     # ------------------------------------------------------------------
     # Engine lifecycle
     # ------------------------------------------------------------------
     def start(self):
         """Start the trading engine."""
         self.running = True
-        bot_logger.info("TradingEngine STARTED")
+        for s in self.strategies:
+            s.enable()
+        bot_logger.info("TradingEngine STARTED (All strategies ENABLED, conflicts managed by SignalAggregator)")
 
     def stop(self):
         """Stop the trading engine."""
@@ -114,15 +255,12 @@ class TradingEngine:
         Execute one full trading cycle across all watched pairs.
 
         Steps:
-          1. For each pair, fetch 15-minute candles.
-          2. Run each enabled strategy's analyze() method.
-          3. Collect all generated signals.
-          4. For each actionable signal:
-             a. Validate with risk manager.
-             b. Calculate position size, stop-loss, take-profit.
-             c. Execute trade via paper_trader or exchange_manager.
-             d. Persist Trade and Signal to database.
-          5. Return a list of action summaries.
+          1. Check open trades for stop-loss, take-profit, and time-based exits.
+          2. For each pair, fetch 15-minute candles.
+          3. Run each enabled strategy's analyze() method.
+          4. Collect, deconflict, regime-weight, and rank all signals.
+          5. Validate with risk manager and execute approved signals via smart routing.
+          6. Return a list of action summaries.
 
         Args:
             pairs: List of trading pair strings to scan (e.g. ['BTC/INR']).
@@ -133,8 +271,24 @@ class TradingEngine:
         if not self.running:
             return []
 
+        # Update position tracker mark-to-market
+        try:
+            current_prices = self.exchange_manager.get_current_prices()
+            if current_prices:
+                self.position_tracker.update_mark_to_market(current_prices)
+        except Exception as e:
+            bot_logger.debug(f"[Engine] MTM update failed: {e}")
+
+        # Check existing positions first
+        try:
+            self.check_open_trades()
+        except Exception as e:
+            bot_logger.error(f"[Engine] Error in check_open_trades: {e}")
+
         actions_taken: List[Dict[str, Any]] = []
         all_signals: List[StrategySignal] = []
+        detected_regimes: Dict[str, str] = {}
+        recent_closes: Dict[str, pd.Series] = {}
 
         # ------------------------------------------------------------------
         # Phase 1: Collect signals from all strategies for every pair
@@ -150,6 +304,18 @@ class TradingEngine:
                     )
                     continue
 
+                if "close" in df.columns:
+                    recent_closes[pair] = df["close"]
+
+                # Step 1.1: Market Regime Detection
+                try:
+                    regime_res = self.regime_detector.detect(pair, df)
+                    detected_regimes[pair] = regime_res.get("regime", "NEUTRAL")
+                except Exception as reg_err:
+                    bot_logger.warning(f"[Engine] Regime detector error on {pair}: {reg_err}")
+                    detected_regimes[pair] = "NEUTRAL"
+
+                # Step 1.2: Run each enabled strategy
                 for strategy in self.strategies:
                     if not strategy.enabled:
                         continue
@@ -167,12 +333,40 @@ class TradingEngine:
                     f"[Engine] Failed to fetch data for {pair}: {e}"
                 )
 
+        # Update cross-asset correlation matrix (Agent 4)
+        if len(recent_closes) >= 2 and hasattr(self.risk_manager, "correlation_manager"):
+            try:
+                self.risk_manager.correlation_manager.update_correlation_matrix(recent_closes)
+            except Exception as ce:
+                bot_logger.debug(f"[Engine] Correlation matrix update error: {ce}")
+
         # ------------------------------------------------------------------
-        # Phase 2: Process signals through risk management and execute
+        # Phase 1.5: Aggregate, deconflict, regime-weight, and rank signals
+        # ------------------------------------------------------------------
+        win_rates = {
+            strat_name: stats.get("win_rate", 0.50)
+            for strat_name, stats in self.strategy_performance.items()
+        }
+        aggregated_signals = self.signal_aggregator.aggregate(
+            signals=all_signals,
+            regime="NEUTRAL",
+            win_rates=win_rates,
+            pair_regimes=detected_regimes,
+            enforce_throttle=True,
+        )
+
+        if all_signals:
+            bot_logger.info(
+                f"[Engine] SignalAggregator: {len(all_signals)} raw signals aggregated down to "
+                f"{len(aggregated_signals)} actionable deconflicted signals"
+            )
+
+        # ------------------------------------------------------------------
+        # Phase 2: Process filtered signals through risk management and execute
         # ------------------------------------------------------------------
         db = SessionLocal()
         try:
-            for signal in all_signals:
+            for signal in aggregated_signals:
                 try:
                     action = self._process_signal(signal, db)
                     if action is not None:
@@ -209,8 +403,6 @@ class TradingEngine:
         self._save_signal(signal, db)
 
         # -- Shadow Mode Guard --
-        # When a strategy runs in shadow mode, signals are recorded and logged for
-        # telemetry and performance analysis, but execution is strictly bypassed.
         if bool(signal.metadata and signal.metadata.get("shadow_mode")):
             bot_logger.info(
                 f"[Engine] [SHADOW MODE] {signal.strategy} {action} signal on {pair} "
@@ -228,57 +420,60 @@ class TradingEngine:
                 "timestamp": timestamp_now(),
             }
 
-        # -- Risk checks --
+        # -- Pre-Trade Risk Gate (Agent 4) --
         if action == "BUY":
-            num_open_trades = (
-                db.query(Trade).filter(Trade.status == "OPEN").count()
-            )
             current_prices = self.exchange_manager.get_current_prices()
             portfolio_value = self.paper_trader.get_portfolio_value(current_prices)
 
-            allowed, reason = self.risk_manager.can_open_trade(
-                portfolio_value=portfolio_value,
-                num_open_trades=num_open_trades,
-            )
-            if not allowed:
-                bot_logger.info(
-                    f"[Engine] Risk manager rejected new trade for {pair}: {reason}"
-                )
-                return None
+            # Update portfolio monitor with latest mark-to-market equity
+            if hasattr(self.risk_manager, "portfolio_monitor"):
+                self.risk_manager.portfolio_monitor.update_portfolio_value(portfolio_value, engine=self)
 
-            # Get current price for position sizing
             ticker = self.exchange_manager.get_ticker(pair)
-            current_price = float(ticker.get("last_price", 0)) if ticker else 0
+            current_price = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker or 0)
             if current_price <= 0:
-                bot_logger.warning(
-                    f"[Engine] Invalid ticker price for {pair}"
-                )
+                bot_logger.warning(f"[Engine] Invalid ticker price for {pair}")
                 return None
 
-            position_size = self.risk_manager.calculate_position_size(
+            # Gather open positions for risk gate
+            open_positions = []
+            if hasattr(self, "position_tracker"):
+                open_positions = [p.to_dict() for p in self.position_tracker.get_all_positions()]
+            else:
+                open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+                open_positions = [
+                    {"pair": t.pair, "side": t.side, "quantity": t.quantity, "entry_price": t.entry_price}
+                    for t in open_trades
+                ]
+
+            strategy_stats = self.strategy_performance.get(signal.strategy, {})
+
+            decision = self.risk_manager.validate_signal(
+                signal=signal,
                 portfolio_value=portfolio_value,
-                entry_price=current_price,
-            )
-            stop_loss = self.risk_manager.calculate_stop_loss(
-                entry_price=current_price, side="BUY"
-            )
-            take_profit = self.risk_manager.calculate_take_profit(
-                entry_price=current_price, side="BUY"
+                open_positions=open_positions,
+                db_session=db,
+                current_price=current_price,
+                strategy_stats=strategy_stats,
             )
 
-            # Use signal metadata stop loss & take profit if provided (e.g. from Neural Network or Breakout Hunter)
-            if signal.metadata and "stop_loss_price" in signal.metadata:
-                stop_loss = signal.metadata["stop_loss_price"]
-            if signal.metadata and "take_profit_price" in signal.metadata:
-                take_profit = signal.metadata["take_profit_price"]
-
-            if position_size <= 0:
-                bot_logger.warning(
-                    f"[Engine] Calculated position size is zero for {pair}"
+            if not decision.approved:
+                bot_logger.info(
+                    f"[Engine] Signal for {pair} rejected by Pre-Trade Risk Gate: {'; '.join(decision.reasons)}"
                 )
                 return None
 
-            # Execute the trade
+            act_signal = decision.adjusted_signal or signal
+            position_size = decision.position_size
+
+            stop_loss = act_signal.metadata.get("stop_loss_price") if act_signal.metadata else None
+            take_profit = act_signal.metadata.get("take_profit_price") if act_signal.metadata else None
+            if not stop_loss:
+                stop_loss = self.risk_manager.calculate_stop_loss(current_price, "BUY")
+            if not take_profit:
+                take_profit = self.risk_manager.calculate_take_profit(current_price, "BUY")
+
+            # Execute the trade via smart order routing
             trade_result = self._execute_trade(
                 pair=pair,
                 side="BUY",
@@ -286,21 +481,20 @@ class TradingEngine:
                 price=current_price,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
-                signal=signal,
+                signal=act_signal,
             )
 
             if trade_result:
-                # In paper mode, PaperTrader.execute_trade() already wrote
-                # the Trade row to the DB — saving again here would create
-                # a duplicate. Only persist separately for live trades.
+                # In paper mode, PaperTrader already wrote the Trade row to the DB.
+                # Only persist separately for live trades.
                 if self.mode != "paper":
                     self._save_trade(trade_result, signal, db)
                 return trade_result
 
         elif action == "SELL":
-            # For SELL, we close existing positions for this pair
+            # For SELL, close existing positions for this pair
             ticker = self.exchange_manager.get_ticker(pair)
-            current_price = float(ticker.get("last_price", 0)) if ticker else 0
+            current_price = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker or 0)
             if current_price <= 0:
                 return None
 
@@ -320,7 +514,7 @@ class TradingEngine:
 
             if actions:
                 return {"message": f"Closed {len(actions)} trades on SELL signal", "actions": actions}
-            
+
             return None
 
     def _execute_trade(
@@ -334,36 +528,165 @@ class TradingEngine:
         signal: StrategySignal,
     ) -> Optional[Dict[str, Any]]:
         """
-        Execute a trade in paper or live mode.
-
-        Returns a trade-result dict on success, None on failure.
+        Execute a trade using smart order routing in paper or live mode.
+        Tracks execution metrics (slippage, fill time, partial fills) and
+        updates the unified position tracker.
         """
+        start_time = time.time()
         try:
+            # Step 1: Fetch order book to inspect liquidity depth
+            order_book = None
+            try:
+                order_book = self.exchange_manager.get_order_book(pair=pair, limit=20)
+            except Exception as ob_err:
+                bot_logger.debug(f"[Engine] Could not fetch order book for {pair}: {ob_err}")
+
+            market_state = {
+                "current_price": price,
+                "order_book": order_book,
+                "quantity": quantity,
+            }
+
+            # Step 2: Route order through SmartOrderRouter
+            plans = self.order_router.route(signal=signal, market_state=market_state, quantity=quantity)
+            if not plans:
+                plans = [
+                    OrderPlan(
+                        order_type="MARKET",
+                        quantity=quantity,
+                        price=price,
+                        delay_seconds=0.0,
+                        timeout_seconds=15.0,
+                        fallback="MARKET",
+                    )
+                ]
+
+            executed_results = []
+            filled_tranches: List[Dict[str, float]] = []
+            had_partial = False
+
+            # Step 3: Execute routed plans
             if self.mode == "paper":
-                result = self.paper_trader.execute_trade(
-                    pair=pair,
-                    side=side,
-                    quantity=quantity,
-                    price=price,
-                    strategy=signal.strategy,
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    entry_reason=signal.reason if signal else "Strategy trade",
-                )
+                for plan in plans:
+                    exec_price = plan.price if plan.price and plan.price > 0 else price
+                    res = self.paper_trader.execute_trade_with_slippage(
+                        pair=pair,
+                        side=side,
+                        quantity=plan.quantity,
+                        price=exec_price,
+                        strategy=signal.strategy,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit,
+                        entry_reason=signal.reason if signal else "Strategy trade",
+                        order_type=plan.order_type,
+                        timeout_seconds=plan.timeout_seconds,
+                    )
+                    if isinstance(res, dict) and "error" not in res:
+                        executed_results.append(res)
+                        filled_tranches.append({
+                            "qty": plan.quantity,
+                            "price": res.get("entry_price", exec_price),
+                        })
+                        if res.get("had_partial_fills"):
+                            had_partial = True
+                    else:
+                        bot_logger.warning(f"[Engine] Paper execution plan failed: {res}")
             else:
-                result = self.exchange_manager.place_order(
-                    pair=pair,
-                    side=side,
-                    quantity=quantity,
-                    price=price,
-                    order_type="LIMIT",
-                )
+                # Live execution with smart order routing & fill polling
+                for plan in plans:
+                    if plan.delay_seconds > 0:
+                        time.sleep(min(plan.delay_seconds, 30.0))
+
+                    exec_price = plan.price if plan.price and plan.price > 0 else price
+                    order_res = self.exchange_manager.place_order(
+                        pair=pair,
+                        side=side,
+                        quantity=plan.quantity,
+                        price=exec_price,
+                        order_type=plan.order_type,
+                    )
+                    order_id = None
+                    if isinstance(order_res, dict):
+                        order_id = order_res.get("id") or order_res.get("order_id")
+
+                    filled_qty = plan.quantity
+                    fill_price = exec_price
+
+                    # If limit order and order_id present, poll for fill
+                    if order_id and plan.order_type.upper() == "LIMIT":
+                        poll_start = time.time()
+                        status = "open"
+                        while time.time() - poll_start < plan.timeout_seconds:
+                            time.sleep(0.5)
+                            try:
+                                status_res = self.exchange_manager.get_order_status(order_id)
+                                if isinstance(status_res, dict):
+                                    status = status_res.get("status", "open").lower()
+                                    if status in ["filled", "closed", "complete"]:
+                                        fill_price = float(status_res.get("price") or exec_price)
+                                        filled_qty = float(status_res.get("filled_quantity") or plan.quantity)
+                                        break
+                            except Exception:
+                                pass
+
+                        # If timed out and still open, cancel and fallback to MARKET if specified
+                        if status not in ["filled", "closed", "complete"]:
+                            had_partial = True
+                            bot_logger.warning(
+                                f"[Engine] Limit order {order_id} timed out after {plan.timeout_seconds}s. Cancelling..."
+                            )
+                            try:
+                                self.exchange_manager.cancel_order(order_id)
+                            except Exception as ce:
+                                bot_logger.warning(f"[Engine] Cancel order error: {ce}")
+
+                            if plan.fallback.upper() == "MARKET":
+                                bot_logger.info(f"[Engine] Fallback: Executing MARKET order for {plan.quantity} {pair}")
+                                fb_res = self.exchange_manager.place_order(
+                                    pair=pair,
+                                    side=side,
+                                    quantity=plan.quantity,
+                                    price=price,
+                                    order_type="MARKET",
+                                )
+                                executed_results.append(fb_res)
+
+                    executed_results.append(order_res)
+                    filled_tranches.append({"qty": filled_qty, "price": fill_price})
+
+            # Calculate execution metrics
+            total_filled = sum(t["qty"] for t in filled_tranches) if filled_tranches else quantity
+            weighted_fill_price = (
+                sum(t["qty"] * t["price"] for t in filled_tranches) / max(total_filled, 1e-9)
+                if filled_tranches else price
+            )
+            slippage_bps = (
+                round(abs(weighted_fill_price - price) / price * 10000.0, 2)
+                if price > 0 else 0.0
+            )
+            fill_time_ms = round((time.time() - start_time) * 1000.0, 2)
+
+            primary_res = executed_results[0] if executed_results else {}
+            trade_id = primary_res.get("id") if isinstance(primary_res, dict) else None
+
+            # Step 4: Register in Unified Position Tracker
+            pos = self.position_tracker.open_position({
+                "pair": pair,
+                "side": side,
+                "quantity": total_filled,
+                "price": weighted_fill_price,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
+                "strategy": signal.strategy,
+                "trade_id": trade_id,
+            })
 
             trade_info = {
                 "pair": pair,
                 "side": side,
-                "quantity": quantity,
-                "price": price,
+                "quantity": total_filled,
+                "price": round(weighted_fill_price, 4),
+                "requested_price": price,
                 "stop_loss": stop_loss,
                 "take_profit": take_profit,
                 "strategy": signal.strategy,
@@ -371,13 +694,22 @@ class TradingEngine:
                 "reason": signal.reason,
                 "mode": self.mode,
                 "timestamp": timestamp_now(),
-                "result": result,
+                "execution_metrics": {
+                    "fill_time_ms": fill_time_ms,
+                    "total_filled": round(total_filled, 6),
+                    "avg_fill_price": round(weighted_fill_price, 4),
+                    "slippage_bps": slippage_bps,
+                    "had_partial_fills": had_partial,
+                    "num_orders": len(plans),
+                    "plans": [p.to_dict() for p in plans],
+                },
+                "result": primary_res,
             }
 
             bot_logger.info(
-                f"[Engine] Trade executed: {side} {quantity:.6f} {pair} @ "
-                f"₹{price:.2f} | strategy={signal.strategy} | "
-                f"mode={self.mode}"
+                f"[Engine] Trade executed: {side} {total_filled:.6f} {pair} @ "
+                f"₹{weighted_fill_price:.2f} (slip: {slippage_bps} bps, {fill_time_ms}ms) | "
+                f"strategy={signal.strategy} | mode={self.mode}"
             )
             return trade_info
 
@@ -397,6 +729,15 @@ class TradingEngine:
         """
         if not self.running:
             return
+
+        # Synchronize mark-to-market prices on PositionTracker
+        if hasattr(self, "position_tracker") and hasattr(self, "exchange_manager"):
+            try:
+                current_prices = self.exchange_manager.get_current_prices()
+                if current_prices:
+                    self.position_tracker.update_mark_to_market(current_prices)
+            except Exception as e:
+                bot_logger.debug(f"[Engine] MTM update failed: {e}")
 
         db = SessionLocal()
         try:
@@ -422,27 +763,52 @@ class TradingEngine:
         if not ticker:
             return
 
-        current_price = float(ticker.get("last_price", 0))
+        current_price = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker or 0)
         if current_price <= 0:
             return
 
-        # Update trailing stop if applicable
+        # 1. Scalping Time-based exit check (max 300s = 5m hold time)
+        if trade.strategy == "Scalping" and trade.created_at:
+            now_utc = datetime.utcnow()
+            hold_time_sec = (now_utc - trade.created_at).total_seconds()
+            if hold_time_sec > 300:
+                bot_logger.info(
+                    f"[Engine] Scalping trade #{trade.id} reached max hold time "
+                    f"({hold_time_sec:.0f}s > 300s). Triggering MAX_HOLD_TIME exit."
+                )
+                self._close_trade_internal(trade, current_price, "MAX_HOLD_TIME", db)
+                return
+
+        # 2. Grid Trading Rebalance exit check (dev >= 5.0% from entry price)
+        if trade.strategy == "Grid_Trading" and trade.entry_price:
+            dev_pct = abs(current_price - trade.entry_price) / max(trade.entry_price, 1e-9) * 100.0
+            if dev_pct >= 5.0:
+                bot_logger.info(
+                    f"[Engine] Grid_Trading trade #{trade.id} reached rebalance threshold "
+                    f"({dev_pct:.2f}% >= 5.0%). Triggering GRID_REBALANCE exit."
+                )
+                self._close_trade_internal(trade, current_price, "GRID_REBALANCE", db)
+                return
+
+        # 3. Update trailing stop if applicable
         new_trailing_stop = self.risk_manager.update_trailing_stop(
             trade=trade,
             current_price=current_price,
         )
         if new_trailing_stop:
             trade.trailing_stop = new_trailing_stop
+            if hasattr(self, "position_tracker"):
+                self.position_tracker.update_trailing_stop(trade.pair, new_trailing_stop)
             db.commit()
 
-        # Check stop loss
+        # 4. Check stop loss
         if self.risk_manager.should_stop_loss(trade=trade, current_price=current_price):
             self._close_trade_internal(
                 trade, current_price, "STOP_LOSS", db
             )
             return
 
-        # Check take profit
+        # 5. Check take profit
         if self.risk_manager.should_take_profit(trade=trade, current_price=current_price):
             self._close_trade_internal(
                 trade, current_price, "TAKE_PROFIT", db
@@ -452,31 +818,26 @@ class TradingEngine:
     def _close_trade_internal(
         self, trade, exit_price: float, reason: str, db
     ):
-        """Close a trade, calculate P&L, and update the database."""
+        """Close a trade, calculate P&L, exit slippage, and update the database and position tracker."""
         entry_price = float(trade.entry_price)
         quantity = float(trade.quantity)
-
-        pnl = calculate_pnl(entry_price, exit_price, quantity, trade.side)
-        pnl_pct = calculate_pnl_pct(entry_price, exit_price, trade.side)
-
-        trade.exit_price = exit_price
-        trade.pnl = pnl
-        trade.status = "CLOSED"
-        trade.closed_at = timestamp_now()
-        trade.exit_reason = reason
+        requested_exit_price = exit_price
+        actual_exit_price = exit_price
 
         # Execute the close on paper / live
         try:
             if self.mode == "paper":
-                self.paper_trader.close_trade(
+                close_res = self.paper_trader.close_trade(
                     trade_id=trade.id,
                     current_price=exit_price,
                     exit_reason=reason,
                 )
+                if isinstance(close_res, dict) and "exit_price" in close_res:
+                    actual_exit_price = float(close_res["exit_price"])
             else:
                 self.exchange_manager.place_order(
                     pair=trade.pair,
-                    side="SELL",
+                    side="SELL" if trade.side == "BUY" else "BUY",
                     quantity=quantity,
                     price=exit_price,
                     order_type="MARKET",
@@ -487,19 +848,55 @@ class TradingEngine:
                 f"trade {trade.id}: {e}"
             )
 
+        exit_slippage_bps = (
+            round(abs(actual_exit_price - requested_exit_price) / max(requested_exit_price, 1e-9) * 10000.0, 2)
+            if requested_exit_price > 0 else 0.0
+        )
+
+        pnl = calculate_pnl(entry_price, actual_exit_price, quantity, trade.side)
+        pnl_pct = calculate_pnl_pct(entry_price, actual_exit_price, trade.side)
+
+        trade.exit_price = actual_exit_price
+        trade.pnl = round(pnl, 2)
+        trade.status = "CLOSED"
+        trade.closed_at = datetime.utcnow()
+        trade.exit_reason = reason
+
         db.commit()
+
+        # Update Unified Position Tracker
+        if hasattr(self, "position_tracker"):
+            self.position_tracker.close_position(
+                pair=trade.pair,
+                exit_price=actual_exit_price,
+                reason=reason,
+            )
+
+        # Update per-strategy performance tracking metrics
+        self._update_strategy_performance_on_close(trade.strategy, pnl, db)
+
+        # Notify Strategy Performance Tracker (Agent 5)
+        try:
+            from backend.monitoring.strategy_tracker import strategy_tracker
+            strategy_tracker.record_closed_trade(trade)
+        except Exception as st_err:
+            bot_logger.debug(f"[Engine] strategy_tracker record error: {st_err}")
+
+        # Notify Risk Manager on trade close for win/loss streak and drawdown tracking (Agent 4)
+        if hasattr(self.risk_manager, "on_trade_closed"):
+            self.risk_manager.on_trade_closed(trade, engine=self)
 
         pnl_emoji = "🟢" if pnl >= 0 else "🔴"
         bot_logger.info(
-            f"[Engine] {pnl_emoji} Trade {trade.id} CLOSED ({reason}): "
-            f"{trade.pair} entry=₹{entry_price:.2f} exit=₹{exit_price:.2f} "
-            f"P&L=₹{pnl:.2f} ({pnl_pct:+.2f}%)"
+            f"[Engine] {pnl_emoji} Trade #{trade.id} CLOSED ({reason}): "
+            f"{trade.pair} entry=₹{entry_price:.2f} exit=₹{actual_exit_price:.2f} "
+            f"(slip: {exit_slippage_bps} bps) P&L=₹{pnl:.2f} ({pnl_pct:+.2f}%)"
         )
 
         # Self-learning reinforcement: Neural network adapts its weights based on trade outcome
-        if trade.strategy == "Neural_Network":
+        if trade.strategy and trade.strategy.startswith("Neural_Network"):
             for s in self.strategies:
-                if s.name == "Neural_Network" and hasattr(s, "learn_from_trade"):
+                if s.name == trade.strategy and hasattr(s, "learn_from_trade"):
                     try:
                         s.learn_from_trade(trade, pnl_pct)
                     except Exception as exc:
@@ -529,7 +926,7 @@ class TradingEngine:
                 return
 
             ticker = self.exchange_manager.get_ticker(trade.pair)
-            current_price = float(ticker.get("last_price", 0)) if ticker else 0
+            current_price = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker or 0)
             if current_price <= 0:
                 bot_logger.error(
                     f"[Engine] Cannot get price to close trade {trade_id}"
@@ -577,10 +974,24 @@ class TradingEngine:
                 strategy=signal.strategy,
                 status="OPEN" if trade_info["side"] == "BUY" else "CLOSED",
                 paper_mode=(self.mode == "paper"),
-                created_at=trade_info["timestamp"],
+                created_at=datetime.utcnow(),
+                entry_reason=signal.reason if signal else None,
             )
             db.add(db_trade)
             db.commit()
+            db.refresh(db_trade)
+
+            if hasattr(self, "position_tracker"):
+                self.position_tracker.open_position({
+                    "pair": db_trade.pair,
+                    "side": db_trade.side,
+                    "quantity": db_trade.quantity,
+                    "price": db_trade.entry_price,
+                    "stop_loss": db_trade.stop_loss,
+                    "take_profit": db_trade.take_profit,
+                    "strategy": db_trade.strategy,
+                    "trade_id": db_trade.id,
+                })
         except Exception as e:
             db.rollback()
             bot_logger.error(f"[Engine] Failed to save trade: {e}")
@@ -646,4 +1057,6 @@ class TradingEngine:
                 {"name": s.name, "enabled": s.enabled}
                 for s in self.strategies
             ],
+            "open_positions_count": len(self.position_tracker.positions) if hasattr(self, "position_tracker") else 0,
+            "total_exposure": self.position_tracker.get_total_exposure() if hasattr(self, "position_tracker") else 0.0,
         }

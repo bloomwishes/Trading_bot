@@ -18,6 +18,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from backend.utils.logger import bot_logger
 from backend.engine.indicators import calculate_rsi, calculate_ema, calculate_bollinger_bands
+from backend.exchange.exchange_manager import exchange_manager
+from backend.engine.regime_detector import regime_detector
+from backend.engine.market_state import MarketStateBuilder, sentiment_fetcher
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
@@ -426,3 +429,123 @@ Be concise and specific. Format as a structured analysis."""
         "symbols_analyzed": symbol_list,
         "timestamp": time.time(),
     }
+
+
+def _normalize_route_pair(pair: str) -> str:
+    """Normalize route pair parameters (e.g. BTC-INR, BTC/INR, BTCINR) into standard 'BTC/INR'."""
+    p = pair.strip().upper()
+    if "/" in p:
+        return p
+    if "-" in p:
+        base, quote = p.split("-", 1)
+        return f"{base}/{quote}"
+    if "_" in p:
+        base, quote = p.split("_", 1)
+        return f"{base}/{quote}"
+    if p.endswith("INR"):
+        return f"{p[:-3]}/INR"
+    if p.endswith("USDT"):
+        return f"{p[:-4]}/USDT"
+    return f"{p}/INR"
+
+
+@router.get("/regime/{pair:path}", summary="Get current market regime for a pair")
+async def get_market_regime(
+    pair: str,
+    interval: str = Query("15m", description="Candle interval (1m, 5m, 15m, 1h, etc.)"),
+    limit: int = Query(100, ge=35, le=500, description="Number of candles for indicator calculations"),
+) -> Dict[str, Any]:
+    """
+    Classify current market structure into:
+      - TRENDING_UP
+      - TRENDING_DOWN
+      - RANGING
+      - HIGH_VOLATILITY
+      - NEUTRAL
+    """
+    clean_pair = _normalize_route_pair(pair)
+    try:
+        df, _ = exchange_manager.get_candles_with_meta(clean_pair, interval=interval, limit=limit)
+        if df is None or df.empty:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No candlestick data available for pair {clean_pair}",
+            )
+        detection = regime_detector.detect(clean_pair, df)
+        return detection
+    except HTTPException:
+        raise
+    except Exception as exc:
+        bot_logger.error(f"Error in GET /regime/{pair}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/state/{pair:path}", summary="Get full enriched MarketState for a pair")
+async def get_market_state(
+    pair: str,
+    interval: str = Query("15m", description="Candle interval"),
+    include_candles: bool = Query(False, description="Whether to include recent candle history in output"),
+    candle_limit: int = Query(10, ge=1, le=100, description="Number of candles to include if requested"),
+) -> Dict[str, Any]:
+    """
+    Returns full unified MarketState bundling:
+      - Price and OHLCV history
+      - Computed technical indicators
+      - Detected regime and confidence
+      - Order book imbalance and spread percentage
+      - Volume ratio
+      - Macro sentiment score
+    """
+    clean_pair = _normalize_route_pair(pair)
+    try:
+        state = MarketStateBuilder.build(clean_pair, interval=interval)
+        return state.to_dict(
+            include_candles=include_candles, candle_limit=candle_limit
+        )
+    except Exception as exc:
+        bot_logger.error(f"Error in GET /state/{pair}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/orderbook/{pair:path}", summary="Get order book with imbalance and spread")
+async def get_order_book(
+    pair: str,
+    limit: int = Query(20, ge=1, le=50, description="Order book depth (default 20)"),
+) -> Dict[str, Any]:
+    """
+    Returns top bids and asks from real-time WebSocket or REST fallback,
+    along with order book imbalance (-1.0 to +1.0) and bid-ask spread %.
+    """
+    clean_pair = _normalize_route_pair(pair)
+    try:
+        ob = exchange_manager.get_order_book(clean_pair, limit=limit)
+        imbalance = exchange_manager.get_order_book_imbalance(clean_pair)
+        spread_pct = exchange_manager.get_spread_pct(clean_pair)
+
+        return {
+            "pair": clean_pair,
+            "bids": ob.get("bids", [])[:limit],
+            "asks": ob.get("asks", [])[:limit],
+            "imbalance": imbalance,
+            "spread_pct": spread_pct,
+            "timestamp": ob.get("timestamp") or int(time.time() * 1000),
+            "source": ob.get("source", "exchange"),
+        }
+    except Exception as exc:
+        bot_logger.error(f"Error in GET /orderbook/{pair}: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/sentiment", summary="Macro market sentiment (Fear & Greed, BTC Dominance)")
+async def get_macro_sentiment() -> Dict[str, Any]:
+    """
+    Returns aggregated macro market sentiment:
+      - Alternative.me Fear & Greed Index
+      - CoinGecko BTC dominance & 24h market cap change
+      - Normalized sentiment score (-1.0 to +1.0)
+    """
+    try:
+        return sentiment_fetcher.get_sentiment()
+    except Exception as exc:
+        bot_logger.error(f"Error in GET /sentiment: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))

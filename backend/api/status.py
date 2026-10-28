@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.models import Trade
+from backend.monitoring.health_monitor import health_monitor
+from backend.monitoring.alert_manager import alert_manager
+from backend.monitoring.performance_analytics import PerformanceAnalytics
 
 router = APIRouter(prefix="/api", tags=["status"])
 
@@ -85,6 +88,24 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
     # ── Uptime ───────────────────────────────────────────────────────────
     uptime_secs = time.time() - start_time
 
+    from backend.utils.tunnel_manager import tunnel_manager
+    tunnel_info = tunnel_manager.get_info()
+
+    # ── Health, Analytics & Alerts Summaries (Agent 5) ───────────────────
+    health_stat = health_monitor.get_health_status()
+
+    closed_trades = db.query(Trade).filter(Trade.status == "CLOSED").all()
+    analytics = PerformanceAnalytics.calculate_full_report(closed_trades, period="all")
+
+    active_alerts = alert_manager.get_recent_alerts(limit=5)
+
+    # Market regimes per pair
+    regimes = {}
+    if hasattr(engine, "regime_detector") and engine.regime_detector:
+        for pair in getattr(engine, "watched_pairs", ["BTC/INR", "ETH/INR"]):
+            reg = engine.regime_detector.get_last_regime(pair)
+            regimes[pair] = reg or "NEUTRAL"
+
     return {
         "running": engine.running,
         "scheduler_running": scheduler.is_running,
@@ -97,4 +118,41 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
             "active_trades": open_trades,
             "win_rate_pct": win_rate,
         },
+        "health_summary": {
+            "status": health_stat.get("overall_status", "healthy"),
+            "healthy": health_stat.get("healthy", True),
+            "max_consecutive_failures": health_stat.get("max_consecutive_failures", 0),
+        },
+        "analytics_summary": {
+            "total_trades": analytics["summary"]["total_trades"],
+            "win_rate": analytics["summary"]["win_rate"],
+            "total_pnl": analytics["summary"]["total_pnl"],
+            "profit_factor": analytics["summary"]["profit_factor"],
+            "expectancy": analytics["summary"]["expectancy"],
+        },
+        "active_alerts": active_alerts,
+        "regimes": regimes,
+        "tunnel": tunnel_info,
     }
+
+
+@router.get("/status/health", summary="Detailed system health checks")
+async def get_health() -> dict[str, Any]:
+    """
+    Returns granular health checks across all components:
+    - CoinDCX API responsiveness & latency
+    - SQLite Database connection
+    - APScheduler heartbeat
+    - WebSocket streaming connectivity
+    - Market candle data freshness
+    - Escalation ladder failure counts
+    """
+    return health_monitor.get_health_status()
+
+
+@router.get("/tunnel", summary="Cloudflare mobile tunnel and QR code metadata")
+async def get_tunnel() -> dict[str, Any]:
+    """Return active Cloudflare tunnel URL and local Wi-Fi dashboard access link."""
+    from backend.utils.tunnel_manager import tunnel_manager
+    return tunnel_manager.get_info()
+

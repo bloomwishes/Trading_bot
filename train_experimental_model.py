@@ -34,15 +34,45 @@ from backend.engine.neural_net_strategy import WEIGHTS_PATH, EXPERIMENTAL_WEIGHT
 from backend.utils.logger import bot_logger
 
 
-def download_coindcx_candles(days: int = 730) -> pd.DataFrame:
-    """Download daily candles for BTC/INR directly from CoinDCX public API."""
+def download_btc_historical_candles(days: int = 3650) -> pd.DataFrame:
+    """Download up to 10 years (3650 days) of daily candles for BTC/INR."""
+    # Priority 1: Yahoo Finance 10-year dataset (~3650 candles)
+    try:
+        print(f"[*] Downloading {days} days of historical BTC/INR data from Yahoo Finance...")
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/BTC-INR?interval=1d&range=10y"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resp = requests.get(url, headers=headers, timeout=25)
+        if resp.status_code == 200:
+            res = resp.json()["chart"]["result"][0]
+            ts = res["timestamp"]
+            q = res["indicators"]["quote"][0]
+            df = pd.DataFrame({
+                "timestamp": [int(t) * 1000 for t in ts],
+                "open": q.get("open", []),
+                "high": q.get("high", []),
+                "low": q.get("low", []),
+                "close": q.get("close", []),
+                "volume": q.get("volume", []),
+            }).dropna()
+            for col in ["open", "high", "low", "close", "volume"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+            df = df[df["close"] > 0].sort_values("timestamp").reset_index(drop=True)
+            if len(df) >= 100:
+                start_dt = pd.to_datetime(df["timestamp"].iloc[0], unit="ms")
+                end_dt = pd.to_datetime(df["timestamp"].iloc[-1], unit="ms")
+                print(f"[+] Downloaded {len(df)} daily candles: {start_dt} to {end_dt} (~{(end_dt - start_dt).days / 365.25:.1f} years)")
+                return df
+    except Exception as e:
+        print(f"[-] Yahoo Finance fetch failed ({e}), falling back to CoinDCX...")
+
+    # Priority 2: CoinDCX public API fallback
     url = "https://public.coindcx.com/market_data/candles"
     params = {
         "pair": "I-BTC_INR",
         "interval": "1d",
         "limit": str(min(1000, max(60, days))),
     }
-    print(f"[*] Fetching {days} daily candles for I-BTC_INR from CoinDCX ({url})...")
+    print(f"[*] Fetching daily candles for I-BTC_INR from CoinDCX ({url})...")
     resp = requests.get(url, params=params, timeout=20)
     resp.raise_for_status()
     raw = resp.json()
@@ -76,8 +106,8 @@ def run_experimental_training(
     print("AutoTrader Pro - Experimental Neural Network Training Pipeline")
     print("=================================================================")
 
-    # 1. Download CoinDCX data
-    df = download_coindcx_candles(days=days)
+    # 1. Download BTC data (up to 10 years)
+    df = download_btc_historical_candles(days=days)
 
     # 2. Extract 16 features and build labeled dataset
     print(f"[*] Computing 16 technical features with horizon={horizon_bars} bars and threshold={return_threshold_pct}%...")

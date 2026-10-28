@@ -194,6 +194,73 @@ class CoinDCXClient:
             columns=["timestamp", "open", "high", "low", "close", "volume"]
         )
 
+    def get_order_book(self, pair: str, limit: int = 20) -> Dict[str, Any]:
+        """Fetch order book for *pair* from CoinDCX public endpoint.
+
+        Returns:
+            Dict with 'bids' (sorted descending), 'asks' (sorted ascending),
+            and 'timestamp'. Each entry is [price: float, quantity: float].
+        """
+        base, _, quote = pair.replace("-", "/").partition("/")
+        if not quote:
+            base, quote = pair[:-3], pair[-3:]
+        prefix = "I" if quote.upper() == "INR" else "B"
+        market_pair = f"{prefix}-{base.upper()}_{quote.upper()}"
+
+        self._rate_limit()
+        url = f"{self.PUBLIC_BASE_URL}/market_data/orderbook"
+        try:
+            resp = self._session.get(url, params={"pair": market_pair}, timeout=10)
+            resp.raise_for_status()
+            raw = resp.json()
+
+            raw_bids = raw.get("bids", {})
+            raw_asks = raw.get("asks", {})
+            ts = raw.get("timestamp") or int(time.time() * 1000)
+
+            # Process bids
+            bids: List[List[float]] = []
+            if isinstance(raw_bids, dict):
+                for p_str, q_str in raw_bids.items():
+                    try:
+                        bids.append([float(p_str), float(q_str)])
+                    except (ValueError, TypeError):
+                        continue
+            elif isinstance(raw_bids, list):
+                for item in raw_bids:
+                    try:
+                        bids.append([float(item[0]), float(item[1])])
+                    except (IndexError, ValueError, TypeError):
+                        continue
+
+            # Process asks
+            asks: List[List[float]] = []
+            if isinstance(raw_asks, dict):
+                for p_str, q_str in raw_asks.items():
+                    try:
+                        asks.append([float(p_str), float(q_str)])
+                    except (ValueError, TypeError):
+                        continue
+            elif isinstance(raw_asks, list):
+                for item in raw_asks:
+                    try:
+                        asks.append([float(item[0]), float(item[1])])
+                    except (IndexError, ValueError, TypeError):
+                        continue
+
+            # Sort: bids descending (highest buy price first), asks ascending (lowest sell price first)
+            bids.sort(key=lambda x: x[0], reverse=True)
+            asks.sort(key=lambda x: x[0])
+
+            return {
+                "bids": bids[:limit],
+                "asks": asks[:limit],
+                "timestamp": ts,
+            }
+        except Exception as exc:
+            bot_logger.error(f"CoinDCX get_order_book({pair}) error: {exc}")
+            raise
+
     # ── Account data (private) ─────────────────────────────────────────
     def get_balances(self) -> Dict[str, Dict[str, float]]:
         """Return {currency: {available, locked}} for every non-zero balance."""

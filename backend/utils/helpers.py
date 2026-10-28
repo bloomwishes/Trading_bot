@@ -10,7 +10,7 @@ import functools
 import json
 import locale
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Optional, TypeVar
 
 T = TypeVar("T")
@@ -74,7 +74,7 @@ def calculate_pnl_pct(
 # ═══════════════════════════════════════════════════════════════════════════
 def timestamp_now() -> datetime:
     """Return the current UTC timestamp."""
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -51,6 +51,48 @@ async def list_strategies(request: Request) -> dict[str, Any]:
     return {"strategies": configs}
 
 
+@router.get("/performance", summary="Get strategy performance metrics")
+async def get_strategy_performance(request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """
+    Returns historical trade performance metrics (win rate, total trades, avg PnL, profit factor)
+    for each registered trading strategy.
+    """
+    engine = getattr(request.app.state, "engine", None)
+    if engine and hasattr(engine, "strategy_performance") and engine.strategy_performance:
+        return {"performance": engine.strategy_performance}
+
+    # Fallback to computing directly from closed trades in DB if engine is not running/empty
+    from backend.models import Trade
+    closed_trades = db.query(Trade).filter(Trade.status == "CLOSED").all()
+    by_strategy: dict[str, list] = {}
+    for t in closed_trades:
+        strat = t.strategy or "Unknown"
+        by_strategy.setdefault(strat, []).append(t)
+
+    perf: dict[str, dict[str, Any]] = {}
+    for strat, trades in by_strategy.items():
+        total = len(trades)
+        wins = sum(1 for t in trades if (t.pnl or 0) > 0)
+        losses = sum(1 for t in trades if (t.pnl or 0) <= 0)
+        win_rate = round(wins / total, 4) if total > 0 else 0.50
+        avg_pnl = round(sum(float(t.pnl or 0) for t in trades) / total, 2) if total > 0 else 0.0
+
+        gross_profit = sum(float(t.pnl or 0) for t in trades if (t.pnl or 0) > 0)
+        gross_loss = abs(sum(float(t.pnl or 0) for t in trades if (t.pnl or 0) < 0))
+        profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else (round(gross_profit, 2) if gross_profit > 0 else 1.0)
+
+        perf[strat] = {
+            "total_trades": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": win_rate,
+            "avg_pnl": avg_pnl,
+            "profit_factor": profit_factor,
+        }
+
+    return {"performance": perf}
+
+
 @router.put("/{name}", summary="Update a strategy")
 async def update_strategy(
     name: str,
@@ -112,17 +154,16 @@ async def get_shadow_predictions(request: Request, limit: int = 50) -> dict[str,
     from backend.models import Signal
 
     engine = request.app.state.engine
-    nn_strategy = next(
-        (s for s in engine.strategies if s.name == "Neural_Network"), None
-    )
-
-    stats = nn_strategy.get_shadow_stats() if nn_strategy else {}
+    neural_strategies = [s for s in engine.strategies if s.name.startswith("Neural_Network")]
+    stats = {}
+    for s in neural_strategies:
+        stats[s.name] = s.get_shadow_stats() if hasattr(s, "get_shadow_stats") else {}
 
     db = SessionLocal()
     try:
         rows = (
             db.query(Signal)
-            .filter(Signal.strategy == "Neural_Network")
+            .filter(Signal.strategy.like("Neural_Network%"))
             .order_by(Signal.id.desc())
             .limit(max(1, min(limit, 500)))
             .all()
@@ -171,20 +212,18 @@ async def train_neural_network(
     Shadow Mode Neural Network weights.
     """
     engine = request.app.state.engine
-    nn_strategy = next(
-        (s for s in engine.strategies if s.name == "Neural_Network"), None
-    )
-    if nn_strategy is None:
-        raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
-
     pair = body.pair if body else "BTC/INR"
+    nn_strategy = _get_neural_strategy(engine, pair=pair)
+    if nn_strategy is None:
+        raise HTTPException(status_code=404, detail=f"No Neural Network strategy registered for {pair}")
+
     df = engine.exchange_manager.get_candles(pair=pair, interval="15m", limit=120)
     if df is None or df.empty:
         raise HTTPException(status_code=400, detail=f"No candle data available for {pair}")
 
     metrics = nn_strategy.train_on_candles(df, pair=pair)
     return {
-        "message": f"Neural network calibrated on {pair} (shadow_mode={nn_strategy.params.get('shadow_mode', False)})",
+        "message": f"Neural network ({nn_strategy.name}) calibrated on {pair}",
         "metrics": metrics,
     }
 
@@ -266,18 +305,18 @@ async def combine_neural_models(
     horizon_bars: int = Query(5, ge=1, le=30, description="Forward return horizon bars"),
     return_threshold_pct: float = Query(2.0, ge=0.1, le=15.0, description="Return threshold % for BUY/SELL labels"),
     learning_rate: float = Query(0.005, ge=0.0001, le=0.1, description="Learning rate"),
+    model: Optional[str] = Query(None, description="Model to train: BTC, ETH, or ALTS"),
+    pair: Optional[str] = Query(None, description="Specific pair to train"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """
-    Combines 24 months of CoinDCX macro market structure with all recorded closed-trade
+    Combines macro market structure with all recorded closed-trade
     outcomes in SQLite into a single unified high-performing model and persists it to live weights.
     """
     engine = request.app.state.engine
-    nn_strategy = next(
-        (s for s in engine.strategies if s.name == "Neural_Network"), None
-    )
+    nn_strategy = _get_neural_strategy(engine, pair=pair, model_name=model)
     if nn_strategy is None:
-        raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
+        raise HTTPException(status_code=404, detail="No matching Neural Network strategy registered")
 
     result = nn_strategy.combine_and_train_unified_model(
         db=db,
@@ -303,11 +342,60 @@ async def combine_neural_models(
     }
 
 
-@router.get("/neural_network/live_brain", summary="Get real-time layer activations and firing synapses")
-
-async def get_neural_live_brain(request: Request, pair: str = "BTC/INR") -> dict[str, Any]:
+def _get_neural_strategy(engine, pair: Optional[str] = None, model_name: Optional[str] = None):
     """
-    Returns full neural network state:
+    Finds the appropriate Neural Network strategy instance in the engine.
+    1. If model_name is given, matches s.name.
+    2. If pair is given, matches by pair_filter (e.g. ETH/INR -> Neural_Network_ETH, SOL/INR -> Neural_Network_ALTS).
+    3. Fallback to any strategy starting with Neural_Network.
+    """
+    neural_strategies = [s for s in engine.strategies if s.name.startswith("Neural_Network")]
+    if not neural_strategies:
+        return None
+
+    if model_name:
+        for s in neural_strategies:
+            if s.name.lower() == model_name.lower():
+                return s
+
+    if pair:
+        pair_upper = pair.upper()
+        for s in neural_strategies:
+            if getattr(s, "pair_filter", None) and pair_upper in s.pair_filter:
+                return s
+
+    # Fallback to BTC model or first neural model
+    for s in neural_strategies:
+        if "BTC" in s.name:
+            return s
+    return neural_strategies[0]
+
+
+@router.get("/neural_network/models", summary="List all active Neural Network models and their status")
+async def list_neural_models(request: Request) -> dict[str, Any]:
+    engine = request.app.state.engine
+    neural_strategies = [s for s in engine.strategies if s.name.startswith("Neural_Network")]
+    models_info = []
+    for s in neural_strategies:
+        models_info.append({
+            "name": s.name,
+            "enabled": s.enabled,
+            "pairs": getattr(s, "pair_filter", []),
+            "weights_path": str(getattr(s, "weights_path", "")),
+            "train_steps": s.model.train_steps,
+            "last_loss": s.model.last_loss,
+        })
+    return {"models": models_info}
+
+
+@router.get("/neural_network/live_brain", summary="Get real-time layer activations and firing synapses")
+async def get_neural_live_brain(
+    request: Request,
+    pair: str = "BTC/INR",
+    model: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Returns full neural network state for the requested pair and corresponding model:
       - 16 Input feature values
       - Layer 1 (64) and Layer 2 (32) neuron firing activations
       - Top active synaptic weight connections
@@ -315,11 +403,9 @@ async def get_neural_live_brain(request: Request, pair: str = "BTC/INR") -> dict
       - Capital preservation and closed trade learning telemetry
     """
     engine = request.app.state.engine
-    nn_strategy = next(
-        (s for s in engine.strategies if s.name == "Neural_Network"), None
-    )
+    nn_strategy = _get_neural_strategy(engine, pair=pair, model_name=model)
     if nn_strategy is None:
-        raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
+        raise HTTPException(status_code=404, detail="No matching Neural_Network strategy registered")
 
     # Fetch latest candles to guarantee real-time synaptic firing
     try:
@@ -336,6 +422,8 @@ async def get_neural_live_brain(request: Request, pair: str = "BTC/INR") -> dict
         pass
 
     brain_state = nn_strategy.get_live_brain_state(pair=pair)
+    brain_state["model_name"] = nn_strategy.name
+    brain_state["pair_filter"] = getattr(nn_strategy, "pair_filter", [])
 
     # Add capital survival telemetry
     current_prices = engine.exchange_manager.get_current_prices()
@@ -345,6 +433,49 @@ async def get_neural_live_brain(request: Request, pair: str = "BTC/INR") -> dict
 
     return {
         "brain": brain_state,
+        "capital_health": {
+            "portfolio_value": round(portfolio_val, 2),
+            "cash_balance": round(cash_bal, 2),
+            "initial_balance": 10000.0,
+            "open_positions": open_count,
+            "survival_score": round(min(100.0, max(0.0, (portfolio_val / 10000.0) * 100.0)), 1),
+            "mode": engine.mode,
+            "risk_status": "OPTIMAL" if portfolio_val >= 9500.0 else "DEFENSIVE",
+        },
+    }
+
+
+@router.get("/neural_network/live_brains", summary="Get simultaneous real-time state for all 3 neural models")
+async def get_all_neural_live_brains(request: Request) -> dict[str, Any]:
+    """
+    Returns real-time simultaneous telemetry, status, probabilities, and signals
+    for all 3 Neural Network models operating in tandem.
+    """
+    engine = request.app.state.engine
+    neural_strategies = [s for s in engine.strategies if s.name.startswith("Neural_Network")]
+    
+    current_prices = engine.exchange_manager.get_current_prices()
+    portfolio_val = engine.paper_trader.get_portfolio_value(current_prices)
+    cash_bal = engine.paper_trader.balance
+    open_count = len(engine.paper_trader.positions)
+
+    brains = {}
+    for s in neural_strategies:
+        pair_to_query = (s.pair_filter[0] if getattr(s, "pair_filter", None) else "BTC/INR")
+        # Ensure fresh candles
+        try:
+            df = engine.exchange_manager.get_candles(pair=pair_to_query, interval="15m", limit=100)
+            if df is not None and not df.empty:
+                s._latest_candles_by_pair[pair_to_query] = df
+        except Exception:
+            pass
+        b_state = s.get_live_brain_state(pair=pair_to_query)
+        b_state["model_name"] = s.name
+        b_state["pair_filter"] = getattr(s, "pair_filter", [])
+        brains[s.name] = b_state
+
+    return {
+        "models": brains,
         "capital_health": {
             "portfolio_value": round(portfolio_val, 2),
             "cash_balance": round(cash_bal, 2),

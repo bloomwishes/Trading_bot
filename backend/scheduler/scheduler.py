@@ -17,6 +17,7 @@ from typing import Optional, Dict, Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from backend.config import settings
 from backend.database import SessionLocal
@@ -25,6 +26,9 @@ from backend.utils.logger import bot_logger
 from backend.utils.helpers import timestamp_now
 from backend.engine.trading_engine import TradingEngine
 from backend.scanner.opportunity_scanner import OpportunityScanner
+from backend.monitoring.health_monitor import health_monitor
+from backend.monitoring.strategy_tracker import strategy_tracker
+from backend.monitoring.daily_report import DailyReportGenerator
 
 
 class BotScheduler:
@@ -62,7 +66,14 @@ class BotScheduler:
             "scan_opportunities": None,
             "portfolio_snapshot": None,
             "refresh_market_data": None,
+            "health_check": None,
+            "strategy_review": None,
+            "daily_report": None,
         }
+
+        # Initialize health monitor and strategy tracker with engine
+        health_monitor.set_engine(self.trading_engine)
+        strategy_tracker.set_engine(self.trading_engine)
 
         self._register_jobs()
 
@@ -112,6 +123,31 @@ class BotScheduler:
             replace_existing=True,
         )
 
+        # ── Agent 5: Monitoring Jobs ──────────────────────────────────────
+        self.scheduler.add_job(
+            func=self._job_health_check,
+            trigger=IntervalTrigger(seconds=30),
+            id="health_check",
+            name="System Health Check",
+            replace_existing=True,
+        )
+
+        self.scheduler.add_job(
+            func=self._job_strategy_review,
+            trigger=IntervalTrigger(hours=1),
+            id="strategy_review",
+            name="Strategy Performance Review",
+            replace_existing=True,
+        )
+
+        self.scheduler.add_job(
+            func=self._job_daily_report,
+            trigger=CronTrigger(hour=23, minute=59, timezone="Asia/Kolkata"),
+            id="daily_report",
+            name="Daily Performance Report",
+            replace_existing=True,
+        )
+
     # ------------------------------------------------------------------
     # Job implementations (each wrapped in try/except)
     # ------------------------------------------------------------------
@@ -126,9 +162,9 @@ class BotScheduler:
                     df, meta = self.trading_engine.exchange_manager.get_candles_with_meta(
                         pair=pair, interval="15m", limit=100
                     )
-                    # Update neural network strategy latest candle store for 0ms endpoint response
+                    # Update neural network strategies latest candle store for 0ms endpoint response
                     for s in self.trading_engine.strategies:
-                        if s.name == "Neural_Network" and hasattr(s, "_latest_candles_by_pair"):
+                        if s.name.startswith("Neural_Network") and hasattr(s, "_latest_candles_by_pair"):
                             s._latest_candles_by_pair[pair] = df
                             s._latest_candle_meta[pair] = meta
                 except Exception as p_err:
@@ -194,6 +230,41 @@ class BotScheduler:
             bot_logger.error(
                 f"[Scheduler] portfolio_snapshot error: {e}"
             )
+
+    def _job_health_check(self):
+        """Run system health checks across API, DB, scheduler, WS, and freshness."""
+        if self._paused:
+            return
+        try:
+            health_monitor.run_all_checks(scheduler=self)
+            self._last_run["health_check"] = timestamp_now()
+        except Exception as e:
+            bot_logger.warning(f"[Scheduler] health_check error: {e}")
+
+    def _job_strategy_review(self):
+        """Review strategy rolling metrics and detect degradation."""
+        if self._paused:
+            return
+        try:
+            from backend.models import Trade
+            db = SessionLocal()
+            try:
+                trades = db.query(Trade).filter(Trade.status == "CLOSED").all()
+                strategy_tracker.sync_from_database(trades)
+                self._last_run["strategy_review"] = timestamp_now()
+                bot_logger.info(f"[Scheduler] strategy_review completed across {len(trades)} closed trades.")
+            finally:
+                db.close()
+        except Exception as e:
+            bot_logger.warning(f"[Scheduler] strategy_review error: {e}")
+
+    def _job_daily_report(self):
+        """Generate and dispatch daily performance report at 23:59 IST."""
+        try:
+            DailyReportGenerator.send_daily_report(engine=self.trading_engine)
+            self._last_run["daily_report"] = timestamp_now()
+        except Exception as e:
+            bot_logger.error(f"[Scheduler] daily_report generation error: {e}")
 
     # ------------------------------------------------------------------
     # Portfolio snapshot persistence

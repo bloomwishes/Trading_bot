@@ -34,6 +34,16 @@ class TradeCreate(BaseModel):
     take_profit: Optional[float] = Field(default=None, examples=[3.0])
 
 
+class StopLossUpdate(BaseModel):
+    """Body for updating a trade's stop loss price."""
+    stop_loss: float = Field(..., gt=0, description="New stop loss price in INR")
+
+
+class TakeProfitUpdate(BaseModel):
+    """Body for updating a trade's take profit price."""
+    take_profit: float = Field(..., gt=0, description="New take profit price in INR")
+
+
 class TradeResponse(BaseModel):
     id: int
     pair: str
@@ -189,6 +199,16 @@ class RiskSettings(BaseModel):
     default_take_profit_pct: float = Field(default=3.0, ge=0.1, le=100.0)
     trailing_stop_activate_pct: float = Field(default=1.5, ge=0.1, le=50.0)
     trailing_stop_trail_pct: float = Field(default=0.5, ge=0.1, le=50.0)
+    weekly_loss_limit_pct: float = Field(default=7.0, ge=0.1, le=100.0)
+    total_drawdown_limit_pct: float = Field(default=15.0, ge=0.1, le=100.0)
+    max_total_exposure_pct: float = Field(default=50.0, ge=0.1, le=100.0)
+    max_single_direction_exposure_pct: float = Field(default=35.0, ge=0.1, le=100.0)
+    min_risk_reward_ratio: float = Field(default=1.5, ge=0.1, le=20.0)
+    max_correlated_positions: int = Field(default=2, ge=1, le=20)
+    correlation_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    cooldown_after_consecutive_losses: int = Field(default=3, ge=1, le=20)
+    cooldown_duration_minutes: int = Field(default=60, ge=1, le=1440)
+    reduce_size_high_volatility: bool = Field(default=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

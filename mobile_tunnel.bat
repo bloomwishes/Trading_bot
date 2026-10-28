@@ -29,7 +29,9 @@ echo [INFO] Starting secure tunnel to your dashboard (http://localhost:3000)...
 echo [INFO] Look for the line starting with "https://....trycloudflare.com" below.
 echo [INFO] Open that URL on your mobile phone to view and control your bot!
 echo.
-echo =========================================================================
+if not exist "%SCRIPT_DIR%logs" mkdir "%SCRIPT_DIR%logs"
+del /f /q "%SCRIPT_DIR%logs\tunnel.log" 2>nul
 
-"%SCRIPT_DIR%cloudflared.exe" tunnel --url http://localhost:3000
+echo [INFO] Tunnel logging to %SCRIPT_DIR%logs\tunnel.log
+"%SCRIPT_DIR%cloudflared.exe" tunnel --url http://localhost:3000 --logfile "%SCRIPT_DIR%logs\tunnel.log"
 pause

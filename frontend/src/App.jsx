@@ -10,7 +10,7 @@ import RiskSettings from './pages/RiskSettings';
 import LLMDecisions from './pages/LLMDecisions';
 import NeuralBrain from './pages/NeuralBrain';
 import BotLogs from './pages/BotLogs';
-
+import AgentHub from './pages/AgentHub';
 import Diagnostics from './pages/Diagnostics';
 
 export default function App() {
@@ -18,6 +18,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={<Overview />} />
+        <Route path="agents" element={<AgentHub />} />
         <Route path="trades" element={<LiveTrades />} />
         <Route path="history" element={<TradeHistory />} />
         <Route path="scanner" element={<Scanner />} />

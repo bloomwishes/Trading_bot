@@ -9,9 +9,10 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List, Optional
 
 from fastapi import WebSocket
 
@@ -84,6 +85,9 @@ class BotLogger:
     def error(self, message: str) -> None:
         self._log("ERROR", message)
 
+    def critical(self, message: str) -> None:
+        self._log("CRITICAL", message)
+
     def debug(self, message: str) -> None:
         self._log("DEBUG", message)
 
@@ -111,7 +115,7 @@ class BotLogger:
                 entry = BotLog(
                     level=level,
                     message=message,
-                    created_at=datetime.utcnow(),
+                    created_at=datetime.now(timezone.utc),
                 )
                 session.add(entry)
                 session.commit()
@@ -133,7 +137,7 @@ class BotLogger:
                 "type": "log",
                 "level": level,
                 "message": message,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
 
@@ -162,3 +166,77 @@ class BotLogger:
 # Global singleton
 # ---------------------------------------------------------------------------
 bot_logger = BotLogger()
+
+
+# ---------------------------------------------------------------------------
+# Structured Event Logging Helpers (Agent 5)
+# ---------------------------------------------------------------------------
+def _format_event_entry(
+    event_type: str,
+    data: Dict[str, Any],
+    trace_id: Optional[str] = None,
+    category: str = "GENERAL",
+) -> Dict[str, Any]:
+    """Build a uniform structured event dict."""
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event_type": event_type,
+        "trace_id": trace_id or str(uuid.uuid4()),
+        "agent": "AutoTrader",
+        "category": category,
+        "data": data,
+    }
+
+
+def log_trade_event(
+    event_type: str,
+    trade_data: Dict[str, Any],
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Log a structured trade lifecycle event (ORDER_PLACED, TRADE_OPENED, TRADE_CLOSED, etc.).
+    Emits formatted string to bot_logger.info and returns the event payload.
+    """
+    payload = _format_event_entry(event_type, trade_data, trace_id, category="TRADE")
+    msg = f"[EVENT:TRADE] {event_type} | trace={payload['trace_id'][:8]} | {json.dumps(trade_data, default=str)}"
+    bot_logger.info(msg)
+    return payload
+
+
+def log_signal_event(
+    event_type: str,
+    signal_data: Dict[str, Any],
+    trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Log a structured signal generation/aggregation event (SIGNAL_GENERATED, SIGNAL_AGGREGATED, etc.).
+    Emits formatted string to bot_logger.info and returns the event payload.
+    """
+    payload = _format_event_entry(event_type, signal_data, trace_id, category="SIGNAL")
+    msg = f"[EVENT:SIGNAL] {event_type} | trace={payload['trace_id'][:8]} | {json.dumps(signal_data, default=str)}"
+    bot_logger.info(msg)
+    return payload
+
+
+def log_risk_event(
+    event_type: str,
+    risk_data: Dict[str, Any],
+    trace_id: Optional[str] = None,
+    level: str = "WARNING",
+) -> Dict[str, Any]:
+    """
+    Log a structured risk management event (RISK_GATE_REJECT, DRAWDOWN_BREACH, EMERGENCY_SHUTDOWN, etc.).
+    Emits formatted string to bot_logger with appropriate level and returns the event payload.
+    """
+    payload = _format_event_entry(event_type, risk_data, trace_id, category="RISK")
+    msg = f"[EVENT:RISK] {event_type} | trace={payload['trace_id'][:8]} | {json.dumps(risk_data, default=str)}"
+    if level.upper() == "CRITICAL":
+        bot_logger.critical(msg)
+    elif level.upper() == "ERROR":
+        bot_logger.error(msg)
+    elif level.upper() == "INFO":
+        bot_logger.info(msg)
+    else:
+        bot_logger.warning(msg)
+    return payload
+

@@ -50,6 +50,16 @@ class Settings:
     DEFAULT_TAKE_PROFIT_PCT: float = float(os.getenv("DEFAULT_TAKE_PROFIT_PCT", "3.0"))
     TRAILING_STOP_ACTIVATE_PCT: float = float(os.getenv("TRAILING_STOP_ACTIVATE_PCT", "1.5"))
     TRAILING_STOP_TRAIL_PCT: float = float(os.getenv("TRAILING_STOP_TRAIL_PCT", "0.5"))
+    WEEKLY_LOSS_LIMIT_PCT: float = float(os.getenv("WEEKLY_LOSS_LIMIT_PCT", "7.0"))
+    TOTAL_DRAWDOWN_LIMIT_PCT: float = float(os.getenv("TOTAL_DRAWDOWN_LIMIT_PCT", "15.0"))
+    MAX_TOTAL_EXPOSURE_PCT: float = float(os.getenv("MAX_TOTAL_EXPOSURE_PCT", "50.0"))
+    MAX_SINGLE_DIRECTION_EXPOSURE_PCT: float = float(os.getenv("MAX_SINGLE_DIRECTION_EXPOSURE_PCT", "35.0"))
+    MIN_RISK_REWARD_RATIO: float = float(os.getenv("MIN_RISK_REWARD_RATIO", "1.5"))
+    MAX_CORRELATED_POSITIONS: int = int(os.getenv("MAX_CORRELATED_POSITIONS", "2"))
+    CORRELATION_THRESHOLD: float = float(os.getenv("CORRELATION_THRESHOLD", "0.7"))
+    COOLDOWN_AFTER_CONSECUTIVE_LOSSES: int = int(os.getenv("COOLDOWN_AFTER_CONSECUTIVE_LOSSES", "3"))
+    COOLDOWN_DURATION_MINUTES: int = int(os.getenv("COOLDOWN_DURATION_MINUTES", "60"))
+    REDUCE_SIZE_HIGH_VOLATILITY: bool = os.getenv("REDUCE_SIZE_HIGH_VOLATILITY", "True").lower() in ("true", "1")
 
     # ── Watched Pairs (INR denominated) ────────────────────────────────
     WATCHED_PAIRS: list[str] = [
@@ -60,9 +70,21 @@ class Settings:
         "BNB/INR",
     ]
 
-    # ── Market Data Cache ──────────────────────────────────────────────
+    # ── Alerting & Notifications ───────────────────────────────────────
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "")
+    ALERT_WEBHOOK_URL: str = os.getenv("ALERT_WEBHOOK_URL", "")
+    ALERTS_ENABLED: bool = os.getenv("ALERTS_ENABLED", "true").lower() in ("true", "1", "yes")
+
+    # ── Market Data Cache & Stream Settings ────────────────────────────
     CANDLE_CACHE_TTL_SEC: int = int(os.getenv("CANDLE_CACHE_TTL_SEC", "15"))
     MARKET_DATA_CACHE_TTL_SEC: int = int(os.getenv("MARKET_DATA_CACHE_TTL_SEC", "15"))
+    ORDERBOOK_CACHE_TTL_SEC: int = int(os.getenv("ORDERBOOK_CACHE_TTL_SEC", "5"))
+    SENTIMENT_CACHE_TTL_SEC: int = int(os.getenv("SENTIMENT_CACHE_TTL_SEC", "300"))
+    COINDCX_WS_STREAM_URL: str = os.getenv(
+        "COINDCX_WS_STREAM_URL",
+        "wss://stream.coindcx.com/socket.io/?EIO=4&transport=websocket",
+    )
 
     # ── Paths ──────────────────────────────────────────────────────────
     PROJECT_ROOT: Path = PROJECT_ROOT

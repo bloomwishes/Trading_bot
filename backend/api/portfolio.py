@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models import Trade, PortfolioSnapshot
 from backend.schemas import PortfolioSnapshotResponse
+from backend.monitoring.performance_analytics import PerformanceAnalytics
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
@@ -134,3 +135,119 @@ async def get_current_portfolio(
         "active_positions": len(positions),
         "positions": positions,
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GET /api/portfolio/analytics
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.get("/analytics", summary="Comprehensive performance and risk analytics")
+async def get_portfolio_analytics(
+    request: Request,
+    period: str = Query("all", description="Period: today | week | month | all"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Returns complete quantitative metrics:
+    - Core metrics (win rate, total PnL, profit factor, expectancy)
+    - Risk-adjusted ratios (Sharpe, Sortino, Calmar)
+    - Drawdown analytics (max drawdown %, duration, current drawdown)
+    - Win/loss streaks
+    - Multi-dimensional breakdowns (strategy, pair, hour, weekday)
+    - Execution quality (slippage, fill time, hold time)
+    """
+    closed_trades = db.query(Trade).filter(Trade.status == "CLOSED").all()
+    snapshots = db.query(PortfolioSnapshot).order_by(PortfolioSnapshot.created_at.asc()).all()
+
+    # Determine initial capital
+    engine = getattr(request.app.state, "engine", None)
+    initial_capital = 100000.0
+    if engine and hasattr(engine, "paper_trader"):
+        initial_capital = float(getattr(engine.paper_trader, "initial_balance", 100000.0))
+
+    analytics = PerformanceAnalytics.calculate_full_report(
+        trades=closed_trades,
+        portfolio_snapshots=snapshots,
+        period=period,
+        initial_capital=initial_capital,
+    )
+    return analytics
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GET /api/portfolio/equity-curve
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.get("/equity-curve", summary="Equity curve data points and drawdowns")
+async def get_equity_curve(
+    request: Request,
+    limit: int = Query(500, ge=10, le=5000, description="Max points to return"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Returns time-series equity curve points with mark-to-market portfolio value
+    and peak-to-trough drawdowns for charting.
+    """
+    snapshots = (
+        db.query(PortfolioSnapshot)
+        .order_by(desc(PortfolioSnapshot.created_at))
+        .limit(limit)
+        .all()
+    )
+    snapshots.reverse()
+
+    engine = getattr(request.app.state, "engine", None)
+    initial_capital = 100000.0
+    if engine and hasattr(engine, "paper_trader"):
+        initial_capital = float(getattr(engine.paper_trader, "initial_balance", 100000.0))
+
+    curve_points = []
+    peak = initial_capital
+    max_dd = 0.0
+
+    if snapshots:
+        peak = snapshots[0].total_value
+        for s in snapshots:
+            val = float(s.total_value)
+            if val > peak:
+                peak = val
+            dd_pct = ((peak - val) / peak) * 100.0 if peak > 0 else 0.0
+            max_dd = max(max_dd, dd_pct)
+            curve_points.append({
+                "timestamp": s.created_at.isoformat() if s.created_at else None,
+                "equity": round(val, 2),
+                "cash": round(float(s.cash), 2),
+                "drawdown_pct": round(dd_pct, 2),
+            })
+    else:
+        # Construct synthetic curve from closed trades if no snapshots yet
+        closed_trades = db.query(Trade).filter(Trade.status == "CLOSED").order_by(Trade.closed_at.asc()).all()
+        current_eq = initial_capital
+        peak = initial_capital
+        for t in closed_trades:
+            current_eq += float(t.pnl or 0.0)
+            if current_eq > peak:
+                peak = current_eq
+            dd_pct = ((peak - current_eq) / peak) * 100.0 if peak > 0 else 0.0
+            max_dd = max(max_dd, dd_pct)
+            dt = t.closed_at or t.created_at
+            curve_points.append({
+                "timestamp": dt.isoformat() if dt else None,
+                "equity": round(current_eq, 2),
+                "cash": round(current_eq, 2),
+                "drawdown_pct": round(dd_pct, 2),
+            })
+
+    current_val = curve_points[-1]["equity"] if curve_points else initial_capital
+    current_dd = curve_points[-1]["drawdown_pct"] if curve_points else 0.0
+
+    return {
+        "initial_capital": initial_capital,
+        "current_value": current_val,
+        "high_water_mark": round(peak, 2),
+        "max_drawdown_pct": round(max_dd, 2),
+        "current_drawdown_pct": round(current_dd, 2),
+        "total_points": len(curve_points),
+        "points": curve_points,
+    }
+

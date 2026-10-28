@@ -148,6 +148,30 @@ class BinanceFallbackClient:
                 columns=["timestamp", "open", "high", "low", "close", "volume"]
             )
 
+    def get_order_book(self, pair: str, limit: int = 20) -> Dict[str, Any]:
+        """Fetch order book for *pair* via Binance ccxt fallback."""
+        resolved = self._resolve_pair(pair)
+        try:
+            ob = self._exchange.fetch_order_book(resolved, limit=limit)
+            bids = []
+            for b in ob.get("bids", [])[:limit]:
+                p = self._to_inr(float(b[0]), pair, resolved)
+                q = float(b[1])
+                bids.append([p, q])
+            asks = []
+            for a in ob.get("asks", [])[:limit]:
+                p = self._to_inr(float(a[0]), pair, resolved)
+                q = float(a[1])
+                asks.append([p, q])
+            return {
+                "bids": bids,
+                "asks": asks,
+                "timestamp": ob.get("timestamp") or int(time.time() * 1000),
+            }
+        except Exception as exc:
+            bot_logger.error(f"Binance get_order_book({pair}) error: {exc}")
+            raise
+
     # ── Account data ───────────────────────────────────────────────────
     def get_balances(self) -> Dict[str, Dict[str, float]]:
         """Return {currency: {available, locked}}."""

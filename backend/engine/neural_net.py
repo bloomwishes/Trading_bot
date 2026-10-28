@@ -21,13 +21,19 @@ import numpy as np
 import pandas as pd
 
 from backend.engine.indicators import (
+    calculate_adx,
     calculate_atr,
     calculate_bollinger_bands,
     calculate_ema,
+    calculate_keltner_channel,
     calculate_macd,
+    calculate_obv,
     calculate_rsi,
     calculate_stoch_rsi,
+    calculate_supertrend,
     calculate_volume_sma,
+    calculate_vwap,
+    calculate_williams_r,
 )
 from backend.utils.logger import bot_logger
 
@@ -48,6 +54,15 @@ FEATURE_NAMES: List[str] = [
     "rel_volume",
     "bar_return_pct",
     "mom_3bar_pct",
+    # 8 New Features
+    "adx_norm",
+    "plus_di_minus_di",
+    "vwap_deviation",
+    "obv_norm",
+    "williams_r_norm",
+    "keltner_position",
+    "supertrend_signal",
+    "volume_surge",
 ]
 
 NUM_FEATURES: int = len(FEATURE_NAMES)
@@ -56,13 +71,13 @@ CLASS_LABELS: List[str] = ["HOLD", "BUY", "SELL"]
 
 def extract_features_matrix(df: pd.DataFrame) -> Tuple[np.ndarray, pd.Index]:
     """
-    Compute the 16-feature matrix for all valid rows in an OHLCV DataFrame.
+    Compute the 24-feature matrix for all valid rows in an OHLCV DataFrame.
 
     Args:
         df: DataFrame with columns [open, high, low, close, volume].
 
     Returns:
-        Tuple of (features_array of shape [N_valid, 16], valid_index).
+        Tuple of (features_array of shape [N_valid, 24], valid_index).
     """
     if df is None or len(df) < 55:
         return np.empty((0, NUM_FEATURES), dtype=np.float64), pd.Index([])
@@ -82,6 +97,14 @@ def extract_features_matrix(df: pd.DataFrame) -> Tuple[np.ndarray, pd.Index]:
     bb_upper, bb_mid, bb_lower, bb_bw = calculate_bollinger_bands(df, period=20, std_dev=2)
     atr = calculate_atr(df, period=14)
     vol_sma = calculate_volume_sma(df, period=20)
+
+    # 8 New indicator calculations
+    adx, plus_di, minus_di = calculate_adx(df, period=14)
+    vwap = calculate_vwap(df)
+    obv = calculate_obv(df)
+    williams_r = calculate_williams_r(df, period=14)
+    kc_upper, kc_mid, kc_lower = calculate_keltner_channel(df, period=20, multiplier=1.5)
+    supertrend, _ = calculate_supertrend(df, period=10, multiplier=3.0)
 
     safe_close = close.replace(0, np.nan)
     bb_range = (bb_upper - bb_lower).replace(0, np.nan)
@@ -120,6 +143,34 @@ def extract_features_matrix(df: pd.DataFrame) -> Tuple[np.ndarray, pd.Index]:
     f_bar_ret = (close - open_) / safe_open * 100.0
     f_mom3 = close.pct_change(3) * 100.0
 
+    # 17-24: 8 New Features
+    # 17. adx_norm (ADX / 50, capped at 1.0)
+    f_adx_norm = (adx / 50.0).clip(0.0, 1.0)
+
+    # 18. plus_di_minus_di ((+DI - -DI) / 50)
+    f_plus_di_minus_di = ((plus_di - minus_di) / 50.0).clip(-2.0, 2.0)
+
+    # 19. vwap_deviation ((close - VWAP) / close * 100)
+    f_vwap_dev = ((close - vwap) / safe_close * 100.0).clip(-15.0, 15.0)
+
+    # 20. obv_norm (OBV rate of change, 10-period)
+    obv_10 = obv.shift(10)
+    safe_obv_10 = obv_10.abs().replace(0, np.nan)
+    f_obv_norm = ((obv - obv_10) / safe_obv_10).clip(-5.0, 5.0).fillna(0.0)
+
+    # 21. williams_r_norm (Williams %R / 100)
+    f_williams_norm = (williams_r / 100.0).clip(-1.0, 0.0)
+
+    # 22. keltner_position ((close - keltner_lower) / (keltner_upper - keltner_lower) - 0.5)
+    kc_range = (kc_upper - kc_lower).replace(0, np.nan)
+    f_keltner_pos = (((close - kc_lower) / kc_range) - 0.5).clip(-2.0, 2.0).fillna(0.0)
+
+    # 23. supertrend_signal (+1 if price > supertrend, -1 if below)
+    f_supertrend_sig = np.where(close > supertrend, 1.0, np.where(close < supertrend, -1.0, 0.0))
+
+    # 24. volume_surge (volume / vol_sma_20, clipped 0-5)
+    f_vol_surge = (volume / safe_vol_sma).clip(0.0, 5.0)
+
     feat_df = pd.DataFrame(
         {
             "rsi_norm": f_rsi,
@@ -138,6 +189,15 @@ def extract_features_matrix(df: pd.DataFrame) -> Tuple[np.ndarray, pd.Index]:
             "rel_volume": f_rel_vol,
             "bar_return_pct": f_bar_ret,
             "mom_3bar_pct": f_mom3,
+            # 8 New Features
+            "adx_norm": f_adx_norm,
+            "plus_di_minus_di": f_plus_di_minus_di,
+            "vwap_deviation": f_vwap_dev,
+            "obv_norm": f_obv_norm,
+            "williams_r_norm": f_williams_norm,
+            "keltner_position": f_keltner_pos,
+            "supertrend_signal": pd.Series(f_supertrend_sig, index=df.index),
+            "volume_surge": f_vol_surge,
         },
         index=df.index,
     )
@@ -415,7 +475,14 @@ class DeepTradingNN:
         If a trade made profit, reinforce that directional action.
         If a trade lost money, heavily penalize that action towards HOLD/opposite.
         """
-        X = feature_vector.reshape(1, -1)
+        flat = np.asarray(feature_vector, dtype=np.float64).flatten()
+        if len(flat) < self.input_dim:
+            padded = np.zeros(self.input_dim, dtype=np.float64)
+            padded[: len(flat)] = flat
+            flat = padded
+        elif len(flat) > self.input_dim:
+            flat = flat[: self.input_dim]
+        X = flat.reshape(1, -1)
         action_idx = 1 if action == "BUY" else (2 if action == "SELL" else 0)
 
         if pnl_pct > 0:
@@ -665,6 +732,32 @@ class DeepTradingNN:
             self.b_reg = np.array(data["b_reg"], dtype=np.float64)
             self.feat_mean = np.array(data["feat_mean"], dtype=np.float64)
             self.feat_std = np.array(data["feat_std"], dtype=np.float64)
+
+            # Backward compatibility: if loading older weights with fewer features (e.g. 16 instead of 24),
+            # pad with zeros and unit std for new features so inference and retraining work seamlessly.
+            old_dim = self.W1.shape[0]
+            target_dim = NUM_FEATURES
+            if old_dim < target_dim:
+                pad_rows = target_dim - old_dim
+                pad_w = np.zeros((pad_rows, self.W1.shape[1]), dtype=np.float64)
+                self.W1 = np.vstack([self.W1, pad_w])
+                pad_mean = np.zeros((1, pad_rows), dtype=np.float64)
+                pad_std = np.ones((1, pad_rows), dtype=np.float64)
+                self.feat_mean = np.hstack([self.feat_mean, pad_mean])
+                self.feat_std = np.hstack([self.feat_std, pad_std])
+                bot_logger.info(
+                    f"[DeepTradingNN] Backward compatibility: padded weights from {old_dim} to {target_dim} features."
+                )
+            elif old_dim > target_dim:
+                self.W1 = self.W1[:target_dim, :]
+                self.feat_mean = self.feat_mean[:, :target_dim]
+                self.feat_std = self.feat_std[:, :target_dim]
+
+            # Dynamically sync hidden dimensions with loaded weights
+            self.hidden1 = self.W1.shape[1]
+            self.hidden2 = self.W2.shape[1]
+            self.input_dim = self.W1.shape[0]
+
             self.is_trained = bool(data.get("is_trained", True))
             self.train_steps = int(data.get("train_steps", 0))
             self.last_loss = float(data.get("last_loss", 0.0))

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useNavigate } from 'react-router-dom';
 import {
   Wallet,
   TrendingUp,
@@ -8,6 +8,9 @@ import {
   Play,
   Square,
   Zap,
+  QrCode,
+  Smartphone,
+  Bot,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -18,6 +21,8 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import AnimatedNumber from '../components/AnimatedNumber';
+import MobileQRCodeModal from '../components/MobileQRCodeModal';
+import AgentSwarmStatus from '../components/AgentSwarmStatus';
 import { getStatus, startBot, stopBot, getPortfolioSnapshots, getOpportunities } from '../utils/api';
 import { formatINR, formatPercent, getChangeColor, formatDate, formatPair } from '../utils/formatters';
 
@@ -90,9 +95,11 @@ function ChartTooltip({ active, payload }) {
 
 export default function Overview() {
   const { status, refetchStatus } = useOutletContext();
+  const navigate = useNavigate();
   const [snapshots, setSnapshots] = useState([]);
   const [opportunities, setOpportunities] = useState([]);
   const [actionLoading, setActionLoading] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -167,8 +174,20 @@ export default function Overview() {
           <p className="text-sm text-gray-500 mt-1">Real-time trading overview</p>
         </div>
 
-        {/* Start/Stop buttons */}
+        {/* Start/Stop buttons and Mobile QR */}
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setQrModalOpen(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-neon-cyan/10 hover:bg-neon-cyan/20 border border-neon-cyan/30 text-neon-cyan text-sm font-heading font-medium transition-all shadow-[0_0_15px_rgba(0,240,255,0.1)]"
+            title="Scan QR Code to open dashboard on mobile"
+          >
+            <QrCode className="w-4 h-4" />
+            <span>Mobile QR</span>
+            {status?.tunnel?.tunnel_url && (
+              <span className="w-2 h-2 rounded-full bg-neon-green animate-pulse" />
+            )}
+          </button>
+
           {isRunning ? (
             <button
               onClick={handleStopBot}
@@ -212,6 +231,9 @@ export default function Overview() {
           <AnimatedNumber value={winRate} suffix="%" decimals={1} />
         </StatCard>
       </div>
+
+      {/* Autonomous Agent Swarm Real-time Activity Card */}
+      <AgentSwarmStatus onNavigateToAgents={() => navigate('/agents')} />
 
       {/* Charts & Signals row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -333,6 +355,13 @@ export default function Overview() {
           </div>
         </div>
       </div>
+
+      {/* Mobile QR Code Modal */}
+      <MobileQRCodeModal
+        isOpen={qrModalOpen}
+        onClose={() => setQrModalOpen(false)}
+        tunnelData={status?.tunnel}
+      />
     </div>
   );
 }

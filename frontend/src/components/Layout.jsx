@@ -5,7 +5,8 @@ import StatusBadge from './StatusBadge';
 import PaperLiveToggle from './PaperLiveToggle';
 import AnimatedNumber from './AnimatedNumber';
 import { getStatus, setMode, getPortfolioCurrent } from '../utils/api';
-import { Wifi, WifiOff, RefreshCw, Menu, X } from 'lucide-react';
+import { Wifi, WifiOff, RefreshCw, Menu, X, QrCode } from 'lucide-react';
+import MobileQRCodeModal from './MobileQRCodeModal';
 
 export default function Layout() {
   const location = useLocation();
@@ -14,6 +15,7 @@ export default function Layout() {
   const [isConnected, setIsConnected] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -118,6 +120,19 @@ export default function Layout() {
               </p>
             </div>
 
+            {/* Mobile QR Code button */}
+            <button
+              onClick={() => setQrModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-neon-cyan/10 hover:bg-neon-cyan/20 border border-neon-cyan/30 text-neon-cyan text-xs font-heading font-medium transition-all shadow-[0_0_15px_rgba(0,240,255,0.1)]"
+              title="Mobile Access QR Code"
+            >
+              <QrCode className="w-4 h-4" />
+              <span className="hidden sm:inline">Mobile QR</span>
+              {status?.tunnel?.tunnel_url && (
+                <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
+              )}
+            </button>
+
             {/* Refresh button */}
             <button
               onClick={handleRefresh}
@@ -149,6 +164,13 @@ export default function Layout() {
             <Outlet context={{ status, portfolio, refetchStatus: fetchStatus, refetchPortfolio: fetchPortfolio }} />
           </div>
         </main>
+
+        {/* Mobile QR Code Modal */}
+        <MobileQRCodeModal
+          isOpen={qrModalOpen}
+          onClose={() => setQrModalOpen(false)}
+          tunnelData={status?.tunnel}
+        />
       </div>
     </div>
   );

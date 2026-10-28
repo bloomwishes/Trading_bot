@@ -36,12 +36,16 @@ from backend.engine.neural_net import (
     build_training_dataset,
     CLASS_LABELS,
     FEATURE_NAMES,
+    NUM_FEATURES,
 )
 from backend.models import Trade
 from backend.utils.logger import bot_logger
 from backend.utils.helpers import timestamp_now
 
 WEIGHTS_PATH = Path(__file__).parent / "nn_weights.json"
+WEIGHTS_PATH_BTC = Path(__file__).parent / "nn_weights.json"
+WEIGHTS_PATH_ETH = Path(__file__).parent / "nn_weights_eth.json"
+WEIGHTS_PATH_ALTS = Path(__file__).parent / "nn_weights_alts.json"
 EXPERIMENTAL_WEIGHTS_PATH = Path(__file__).parent / "nn_weights_experimental.json"
 
 
@@ -74,22 +78,30 @@ class NeuralNetworkStrategy(StrategyBase):
         "take_profit_atr_mult": 2.5,
     }
 
-    def __init__(self, params: Optional[dict] = None, seed: int = 42):
+    def __init__(
+        self,
+        name: str = "Neural_Network",
+        weights_path: Optional[Path] = None,
+        pair_filter: Optional[List[str]] = None,
+        params: Optional[dict] = None,
+        seed: int = 42,
+    ):
         merged = {**self.DEFAULT_PARAMS, **(params or {})}
         merged["shadow_mode"] = False
-        super().__init__(name="Neural_Network", default_params=merged)
+        super().__init__(name=name, default_params=merged)
 
+        self.pair_filter = [p.upper() for p in pair_filter] if pair_filter else None
         self.model = DeepTradingNN(seed=seed)
-        self.weights_path = WEIGHTS_PATH
+        self.weights_path = Path(weights_path) if weights_path else WEIGHTS_PATH
         if self.weights_path.exists():
             try:
                 if self.model.load_weights(self.weights_path):
                     bot_logger.info(
-                        f"[NeuralNet] Restored pre-trained weights from {self.weights_path} "
+                        f"[{self.name}] Restored pre-trained weights from {self.weights_path} "
                         f"(train_steps={self.model.train_steps}, last_loss={self.model.last_loss})"
                     )
             except Exception as e:
-                bot_logger.warning(f"[NeuralNet] Could not load saved weights: {e}")
+                bot_logger.warning(f"[{self.name}] Could not load saved weights: {e}")
 
         self._prediction_history: List[Dict[str, Any]] = []
         self._learning_history: List[Dict[str, Any]] = []
@@ -283,7 +295,7 @@ class NeuralNetworkStrategy(StrategyBase):
                 target_cls = 0
                 target_ret = float(max(-10.0, min(-0.1, pnl_pct)))
 
-            feat = np.zeros(16, dtype=np.float64)
+            feat = np.zeros(NUM_FEATURES, dtype=np.float64)
             if is_win:
                 if side == "BUY":
                     feat[0] = rng.uniform(-0.4, 0.1)      # rsi oversold / bouncing
@@ -302,6 +314,14 @@ class NeuralNetworkStrategy(StrategyBase):
                     feat[13] = rng.uniform(0.5, 2.0)      # rel volume surge
                     feat[14] = rng.uniform(0.2, 1.0)      # bar return pct
                     feat[15] = rng.uniform(0.5, 2.0)      # mom 3bar pct
+                    feat[16] = rng.uniform(0.5, 0.9)      # adx norm
+                    feat[17] = rng.uniform(0.2, 0.8)      # plus_di_minus_di
+                    feat[18] = rng.uniform(0.1, 0.8)      # vwap deviation
+                    feat[19] = rng.uniform(0.2, 1.5)      # obv norm
+                    feat[20] = rng.uniform(-0.4, 0.0)     # williams r
+                    feat[21] = rng.uniform(0.0, 0.5)      # keltner pos
+                    feat[22] = 1.0                        # supertrend signal
+                    feat[23] = rng.uniform(1.1, 2.5)      # volume surge
                 else:  # SELL win
                     feat[0] = rng.uniform(0.1, 0.6)       # rsi overbought
                     feat[1] = rng.uniform(0.0, 0.5)       # stoch k
@@ -319,6 +339,14 @@ class NeuralNetworkStrategy(StrategyBase):
                     feat[13] = rng.uniform(0.5, 2.0)
                     feat[14] = rng.uniform(-1.0, -0.2)
                     feat[15] = rng.uniform(-2.0, -0.5)
+                    feat[16] = rng.uniform(0.5, 0.9)      # adx norm
+                    feat[17] = rng.uniform(-0.8, -0.2)    # plus_di_minus_di
+                    feat[18] = rng.uniform(-0.8, -0.1)    # vwap deviation
+                    feat[19] = rng.uniform(-1.5, -0.2)    # obv norm
+                    feat[20] = rng.uniform(-1.0, -0.6)    # williams r
+                    feat[21] = rng.uniform(-0.5, 0.0)     # keltner pos
+                    feat[22] = -1.0                       # supertrend signal
+                    feat[23] = rng.uniform(1.1, 2.5)      # volume surge
             else:  # Loss
                 if side == "BUY":
                     # Bought top or into sharp downtrend
@@ -338,6 +366,14 @@ class NeuralNetworkStrategy(StrategyBase):
                     feat[13] = rng.uniform(-0.5, 0.2)     # low volume false breakout
                     feat[14] = rng.uniform(-1.5, -0.2)
                     feat[15] = rng.uniform(-2.5, -0.5)
+                    feat[16] = rng.uniform(0.1, 0.4)      # low adx / no trend
+                    feat[17] = rng.uniform(-0.6, 0.0)     # negative di diff
+                    feat[18] = rng.uniform(-1.5, -0.2)    # price below vwap
+                    feat[19] = rng.uniform(-1.0, 0.0)     # negative obv
+                    feat[20] = rng.uniform(-0.9, -0.5)    # weak momentum
+                    feat[21] = rng.uniform(-0.8, -0.1)    # below keltner mid
+                    feat[22] = -1.0                       # bearish supertrend
+                    feat[23] = rng.uniform(0.2, 0.8)      # low volume
                 else:  # SELL loss
                     feat[0] = rng.uniform(-0.8, -0.4)
                     feat[1] = rng.uniform(-0.8, -0.4)
@@ -355,6 +391,14 @@ class NeuralNetworkStrategy(StrategyBase):
                     feat[13] = rng.uniform(-0.5, 0.2)
                     feat[14] = rng.uniform(0.2, 1.5)
                     feat[15] = rng.uniform(0.5, 2.5)
+                    feat[16] = rng.uniform(0.1, 0.4)
+                    feat[17] = rng.uniform(0.0, 0.6)
+                    feat[18] = rng.uniform(0.2, 1.5)
+                    feat[19] = rng.uniform(0.0, 1.0)
+                    feat[20] = rng.uniform(-0.4, 0.0)
+                    feat[21] = rng.uniform(0.1, 0.8)
+                    feat[22] = 1.0
+                    feat[23] = rng.uniform(0.2, 0.8)
 
             trade_X.append(feat)
             trade_y_cls.append(target_cls)
@@ -464,7 +508,7 @@ class NeuralNetworkStrategy(StrategyBase):
 
         return {
             "status": "success",
-            "model_architecture": "16 -> 64 -> 32 -> DualHead(3-Class + Return)",
+            "model_architecture": f"{NUM_FEATURES} -> 64 -> 32 -> DualHead(3-Class + Return)",
             "weights_file": str(target_path.name),
             "weights_path": str(target_path.resolve()),
             "total_candles": len(df),
@@ -489,7 +533,9 @@ class NeuralNetworkStrategy(StrategyBase):
         self,
         db,
         exchange_manager=None,
-        days: int = 730,
+        pair: Optional[str] = None,
+        pairs: Optional[List[str]] = None,
+        days: int = 3650,
         epochs: int = 100,
         lr: float = 0.005,
         horizon_bars: int = 5,
@@ -497,51 +543,203 @@ class NeuralNetworkStrategy(StrategyBase):
         save_path: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """
-        Combines 24 months of historical CoinDCX macro market structure (730 daily candles)
-        with live closed-trade capital preservation experience (SQLite trades) into a single
-        unified, high-performing DeepTradingNN model.
-
-        Persists weights directly to self.weights_path (nn_weights.json).
+        Combines macro multi-cycle market structure with live closed-trade capital
+        preservation experience into a single unified, high-performing DeepTradingNN model.
+        Supports BTC, ETH, or combined Major Altcoins datasets.
         """
         import requests
 
         target_path = save_path or self.weights_path
+        
+        # Determine target pair(s)
+        if pairs:
+            target_pairs = pairs
+        elif pair:
+            target_pairs = [pair]
+        elif self.pair_filter:
+            target_pairs = self.pair_filter
+        else:
+            target_pairs = ["BTC/INR"]
 
-        # 1. Download / Fetch 24-Month Macro Candle Dataset
-        df_daily = None
-        if exchange_manager is not None:
+        # Map pair symbols to Yahoo Finance and CoinDCX symbols
+        def _get_symbols(p: str):
+            clean = p.upper().replace("/", "-")
+            if not clean.endswith("-INR"):
+                clean = clean.split("-")[0] + "-INR"
+            coin_code = clean.split("-")[0]
+            coindcx_code = f"I-{coin_code}_INR"
+            return clean, coindcx_code
+
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        X_macro_list = []
+        y_cls_macro_list = []
+        y_ret_macro_list = []
+        total_daily_candles = 0
+
+        for cur_p in target_pairs:
+            yf_sym, cdx_sym = _get_symbols(cur_p)
+            df_daily = None
+
+            # Priority 1: Yahoo Finance 10-Year Daily Dataset
             try:
-                df_cand = exchange_manager.get_candles(pair="BTC/INR", interval="1d", limit=days)
-                if df_cand is not None and len(df_cand) >= 60:
-                    df_daily = df_cand
+                bot_logger.info(f"[{self.name}] Downloading historical {yf_sym} data from Yahoo Finance...")
+                y_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}?interval=1d&range=10y"
+                resp = requests.get(y_url, headers=headers, timeout=25)
+                if resp.status_code == 200:
+                    y_data = resp.json()
+                    chart_res = y_data.get("chart", {}).get("result", [])
+                    if chart_res:
+                        res_0 = chart_res[0]
+                        ts_arr = res_0.get("timestamp", [])
+                        quote = res_0.get("indicators", {}).get("quote", [{}])[0]
+                        df_yf = pd.DataFrame({
+                            "timestamp": [int(t) * 1000 for t in ts_arr],
+                            "open": quote.get("open", []),
+                            "high": quote.get("high", []),
+                            "low": quote.get("low", []),
+                            "close": quote.get("close", []),
+                            "volume": quote.get("volume", []),
+                        }).dropna()
+                        for col in ["open", "high", "low", "close", "volume"]:
+                            df_yf[col] = pd.to_numeric(df_yf[col], errors="coerce").fillna(0.0)
+                        df_yf = df_yf[df_yf["close"] > 0].sort_values("timestamp").reset_index(drop=True)
+                        if len(df_yf) >= 100:
+                            df_daily = df_yf
+                            bot_logger.info(f"[{self.name}] Downloaded {len(df_daily)} daily candles for {yf_sym}")
             except Exception as e:
-                bot_logger.warning(f"[NeuralNet] Could not fetch daily candles via exchange_manager: {e}")
+                bot_logger.warning(f"[{self.name}] Yahoo Finance fetch error for {yf_sym}: {e}")
 
-        if df_daily is None or len(df_daily) < 60:
+            # Priority 2: CoinDCX fallback / ExchangeManager
+            if df_daily is None or len(df_daily) < 60:
+                if exchange_manager is not None:
+                    try:
+                        df_cand = exchange_manager.get_candles(pair=cur_p, interval="1d", limit=days)
+                        if df_cand is not None and len(df_cand) >= 60:
+                            df_daily = df_cand
+                    except Exception as e:
+                        bot_logger.warning(f"[{self.name}] Could not fetch daily candles via exchange_manager for {cur_p}: {e}")
+
+            if df_daily is None or len(df_daily) < 60:
+                try:
+                    url = "https://public.coindcx.com/market_data/candles"
+                    params = {"pair": cdx_sym, "interval": "1d", "limit": str(min(1000, max(60, days)))}
+                    resp = requests.get(url, params=params, timeout=20)
+                    resp.raise_for_status()
+                    raw = resp.json()
+                    if isinstance(raw, list) and len(raw) > 0:
+                        df = pd.DataFrame(raw).rename(columns={"time": "timestamp"})
+                        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+                        for col in ["open", "high", "low", "close", "volume"]:
+                            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+                        df_daily = df.sort_values("timestamp").reset_index(drop=True)
+                except Exception as e:
+                    bot_logger.error(f"[{self.name}] Failed to download CoinDCX daily candles for {cdx_sym}: {e}")
+
+            if df_daily is not None and len(df_daily) >= 60:
+                total_daily_candles += len(df_daily)
+                # Multi-horizon dataset generation
+                X_m1, y_c1, y_r1 = build_training_dataset(
+                    df_daily, horizon_bars=horizon_bars, return_threshold_pct=return_threshold_pct
+                )
+                if len(X_m1) > 0:
+                    X_macro_list.append(X_m1)
+                    y_cls_macro_list.append(y_c1)
+                    y_ret_macro_list.append(y_r1)
+
+                X_m2, y_c2, y_r2 = build_training_dataset(
+                    df_daily, horizon_bars=max(2, horizon_bars - 2), return_threshold_pct=max(0.8, return_threshold_pct * 0.6)
+                )
+                if len(X_m2) > 0:
+                    X_macro_list.append(X_m2)
+                    y_cls_macro_list.append(y_c2)
+                    y_ret_macro_list.append(y_r2)
+
+                X_m3, y_c3, y_r3 = build_training_dataset(
+                    df_daily, horizon_bars=horizon_bars + 3, return_threshold_pct=return_threshold_pct * 1.6
+                )
+                if len(X_m3) > 0:
+                    X_macro_list.append(X_m3)
+                    y_cls_macro_list.append(y_c3)
+                    y_ret_macro_list.append(y_r3)
+
+            # Microstructure hourly data
             try:
-                url = "https://public.coindcx.com/market_data/candles"
-                params = {"pair": "I-BTC_INR", "interval": "1d", "limit": str(min(1000, max(60, days)))}
-                resp = requests.get(url, params=params, timeout=20)
-                resp.raise_for_status()
-                raw = resp.json()
-                if isinstance(raw, list) and len(raw) > 0:
-                    df = pd.DataFrame(raw).rename(columns={"time": "timestamp"})
-                    df = df[["timestamp", "open", "high", "low", "close", "volume"]]
-                    for col in ["open", "high", "low", "close", "volume"]:
-                        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-                    df_daily = df.sort_values("timestamp").reset_index(drop=True)
+                h_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}?interval=1h&range=730d"
+                h_resp = requests.get(h_url, headers=headers, timeout=25)
+                if h_resp.status_code == 200:
+                    h_data = h_resp.json()
+                    h_res = h_data.get("chart", {}).get("result", [])
+                    if h_res:
+                        h_res_0 = h_res[0]
+                        h_ts = h_res_0.get("timestamp", [])
+                        h_quote = h_res_0.get("indicators", {}).get("quote", [{}])[0]
+                        df_h = pd.DataFrame({
+                            "timestamp": [int(t) * 1000 for t in h_ts],
+                            "open": h_quote.get("open", []),
+                            "high": h_quote.get("high", []),
+                            "low": h_quote.get("low", []),
+                            "close": h_quote.get("close", []),
+                            "volume": h_quote.get("volume", []),
+                        }).dropna()
+                        for col in ["open", "high", "low", "close", "volume"]:
+                            df_h[col] = pd.to_numeric(df_h[col], errors="coerce").fillna(0.0)
+                        df_h = df_h[df_h["close"] > 0].sort_values("timestamp").reset_index(drop=True)
+                        if len(df_h) >= 200:
+                            X_h, y_c_h, y_r_h = build_training_dataset(
+                                df_h, horizon_bars=4, return_threshold_pct=1.0
+                            )
+                            if len(X_h) > 0:
+                                # Ingest 100% of available hourly candles (up to 17,500+ samples per coin)
+                                X_macro_list.append(X_h)
+                                y_cls_macro_list.append(y_c_h)
+                                y_ret_macro_list.append(y_r_h)
+                                bot_logger.info(f"[{self.name}] Appended {len(X_h)} hourly microstructure samples for {yf_sym}")
             except Exception as e:
-                bot_logger.error(f"[NeuralNet] Failed to download CoinDCX daily candles: {e}")
+                bot_logger.warning(f"[{self.name}] Hourly fetch skipped for {yf_sym}: {e}")
 
-        if df_daily is None or len(df_daily) < 60:
+            # Granular 15-minute intraday structure (last 60 days ~5,750+ candles)
+            try:
+                m15_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}?interval=15m&range=60d"
+                m15_resp = requests.get(m15_url, headers=headers, timeout=25)
+                if m15_resp.status_code == 200:
+                    m15_data = m15_resp.json()
+                    m15_res = m15_data.get("chart", {}).get("result", [])
+                    if m15_res:
+                        m15_res_0 = m15_res[0]
+                        m15_ts = m15_res_0.get("timestamp", [])
+                        m15_quote = m15_res_0.get("indicators", {}).get("quote", [{}])[0]
+                        df_m15 = pd.DataFrame({
+                            "timestamp": [int(t) * 1000 for t in m15_ts],
+                            "open": m15_quote.get("open", []),
+                            "high": m15_quote.get("high", []),
+                            "low": m15_quote.get("low", []),
+                            "close": m15_quote.get("close", []),
+                            "volume": m15_quote.get("volume", []),
+                        }).dropna()
+                        for col in ["open", "high", "low", "close", "volume"]:
+                            df_m15[col] = pd.to_numeric(df_m15[col], errors="coerce").fillna(0.0)
+                        df_m15 = df_m15[df_m15["close"] > 0].sort_values("timestamp").reset_index(drop=True)
+                        if len(df_m15) >= 200:
+                            X_15m, y_c_15m, y_r_15m = build_training_dataset(
+                                df_m15, horizon_bars=4, return_threshold_pct=0.6
+                            )
+                            if len(X_15m) > 0:
+                                X_macro_list.append(X_15m)
+                                y_cls_macro_list.append(y_c_15m)
+                                y_ret_macro_list.append(y_r_15m)
+                                bot_logger.info(f"[{self.name}] Appended {len(X_15m)} 15m intraday samples for {yf_sym}")
+            except Exception as e:
+                bot_logger.warning(f"[{self.name}] 15m fetch skipped for {yf_sym}: {e}")
+
+        if not X_macro_list:
             return {
                 "status": "failed",
-                "reason": "Could not obtain sufficient daily candles (minimum 60 required)",
+                "reason": f"Could not obtain sufficient market candles for {target_pairs}",
             }
 
-        X_macro, y_cls_macro, y_ret_macro = build_training_dataset(
-            df_daily, horizon_bars=horizon_bars, return_threshold_pct=return_threshold_pct
-        )
+        X_macro = np.vstack(X_macro_list)
+        y_cls_macro = np.concatenate(y_cls_macro_list)
+        y_ret_macro = np.concatenate(y_ret_macro_list)
 
         # 2. Extract SQLite Closed-Trade Experience
         trades = db.query(Trade).filter(Trade.status == "CLOSED").all() if db else []
@@ -573,7 +771,7 @@ class NeuralNetworkStrategy(StrategyBase):
                 target_cls = 0  # HOLD - capital defense
                 target_ret = float(max(-10.0, min(-0.1, pnl_pct)))
 
-            feat = np.zeros(16, dtype=np.float64)
+            feat = np.zeros(NUM_FEATURES, dtype=np.float64)
             if is_win:
                 if side == "BUY":
                     feat[0] = rng.uniform(-0.4, 0.1)
@@ -592,6 +790,14 @@ class NeuralNetworkStrategy(StrategyBase):
                     feat[13] = rng.uniform(0.5, 2.0)
                     feat[14] = rng.uniform(0.2, 1.0)
                     feat[15] = rng.uniform(0.5, 2.0)
+                    feat[16] = rng.uniform(0.5, 0.9)
+                    feat[17] = rng.uniform(0.2, 0.8)
+                    feat[18] = rng.uniform(0.1, 0.8)
+                    feat[19] = rng.uniform(0.2, 1.5)
+                    feat[20] = rng.uniform(-0.4, 0.0)
+                    feat[21] = rng.uniform(0.0, 0.5)
+                    feat[22] = 1.0
+                    feat[23] = rng.uniform(1.1, 2.5)
                 else:
                     feat[0] = rng.uniform(0.1, 0.6)
                     feat[1] = rng.uniform(0.0, 0.5)
@@ -609,6 +815,14 @@ class NeuralNetworkStrategy(StrategyBase):
                     feat[13] = rng.uniform(0.5, 2.0)
                     feat[14] = rng.uniform(-1.0, -0.2)
                     feat[15] = rng.uniform(-2.0, -0.5)
+                    feat[16] = rng.uniform(0.5, 0.9)
+                    feat[17] = rng.uniform(-0.8, -0.2)
+                    feat[18] = rng.uniform(-0.8, -0.1)
+                    feat[19] = rng.uniform(-1.5, -0.2)
+                    feat[20] = rng.uniform(-1.0, -0.6)
+                    feat[21] = rng.uniform(-0.5, 0.0)
+                    feat[22] = -1.0
+                    feat[23] = rng.uniform(1.1, 2.5)
             else:
                 if side == "BUY":
                     feat[0] = rng.uniform(0.4, 0.8)
@@ -627,6 +841,14 @@ class NeuralNetworkStrategy(StrategyBase):
                     feat[13] = rng.uniform(-0.5, 0.2)
                     feat[14] = rng.uniform(-1.5, -0.2)
                     feat[15] = rng.uniform(-2.5, -0.5)
+                    feat[16] = rng.uniform(0.1, 0.4)
+                    feat[17] = rng.uniform(-0.6, 0.0)
+                    feat[18] = rng.uniform(-1.5, -0.2)
+                    feat[19] = rng.uniform(-1.0, 0.0)
+                    feat[20] = rng.uniform(-0.9, -0.5)
+                    feat[21] = rng.uniform(-0.8, -0.1)
+                    feat[22] = -1.0
+                    feat[23] = rng.uniform(0.2, 0.8)
                 else:
                     feat[0] = rng.uniform(-0.8, -0.4)
                     feat[1] = rng.uniform(-0.8, -0.4)
@@ -644,6 +866,14 @@ class NeuralNetworkStrategy(StrategyBase):
                     feat[13] = rng.uniform(-0.5, 0.2)
                     feat[14] = rng.uniform(0.2, 1.5)
                     feat[15] = rng.uniform(0.5, 2.5)
+                    feat[16] = rng.uniform(0.1, 0.4)
+                    feat[17] = rng.uniform(0.0, 0.6)
+                    feat[18] = rng.uniform(0.2, 1.5)
+                    feat[19] = rng.uniform(0.0, 1.0)
+                    feat[20] = rng.uniform(-0.4, 0.0)
+                    feat[21] = rng.uniform(0.1, 0.8)
+                    feat[22] = 1.0
+                    feat[23] = rng.uniform(0.2, 0.8)
 
             trade_X.append(feat)
             trade_y_cls.append(target_cls)
@@ -657,7 +887,7 @@ class NeuralNetworkStrategy(StrategyBase):
             y_cls_unified = np.concatenate([y_cls_macro, y_cls_trades])
             y_ret_unified = np.concatenate([y_ret_macro, y_ret_trades])
         else:
-            X_trades = np.empty((0, 16))
+            X_trades = np.empty((0, NUM_FEATURES))
             y_cls_trades = np.empty((0,), dtype=np.int64)
             y_ret_trades = np.empty((0,), dtype=np.float64)
             X_unified = X_macro
@@ -754,7 +984,7 @@ class NeuralNetworkStrategy(StrategyBase):
 
         feat_vector = self._latest_features_by_pair.get(pair)
         if feat_vector is None:
-            feat_vector = np.zeros(16, dtype=np.float64)
+            feat_vector = np.zeros(NUM_FEATURES, dtype=np.float64)
 
         try:
             result = self.model.reinforce_trade_outcome(
@@ -795,6 +1025,9 @@ class NeuralNetworkStrategy(StrategyBase):
         Analyze live candle data, extract 16 technical features, generate forward
         inferences, and emit actionable signals with dynamic ATR protection.
         """
+        if self.pair_filter and pair.upper() not in self.pair_filter:
+            return None
+
         if df is None or len(df) < 55:
             return None
 
@@ -850,8 +1083,17 @@ class NeuralNetworkStrategy(StrategyBase):
             if atr_val <= 0:
                 atr_val = current_price * 0.015
 
-            sl_mult = float(self.params.get("stop_loss_atr_mult", 1.5))
-            tp_mult = float(self.params.get("take_profit_atr_mult", 2.5))
+            # God Mode for BTC trades: Dynamic adaptive risk/reward & precision execution
+            is_btc = "BTC" in pair.upper()
+            if is_btc:
+                # God-mode tighter stop loss (1.2x ATR) and wider high-probability profit run (3.2x ATR)
+                sl_mult = float(self.params.get("btc_stop_loss_atr_mult", 1.2))
+                tp_mult = float(self.params.get("btc_take_profit_atr_mult", 3.2))
+                effective_min_conf = float(self.params.get("btc_min_confidence", min_conf))
+            else:
+                sl_mult = float(self.params.get("stop_loss_atr_mult", 1.5))
+                tp_mult = float(self.params.get("take_profit_atr_mult", 2.5))
+                effective_min_conf = min_conf
 
             if action == "BUY":
                 stop_loss_price = max(0.01, current_price - (atr_val * sl_mult))
@@ -872,7 +1114,7 @@ class NeuralNetworkStrategy(StrategyBase):
                 "take_profit_price": round(take_profit_price, 2),
                 "shadow_mode": False,
                 "execution_mode": "ACTIVE_SIGNALS",
-                "triggered_signal": (action != "HOLD" and confidence >= min_conf),
+                "triggered_signal": (action != "HOLD" and confidence >= effective_min_conf),
             }
             self._total_predictions += 1
             self._prediction_history.append(prediction_record)
@@ -884,8 +1126,8 @@ class NeuralNetworkStrategy(StrategyBase):
                 f"{action} (conf={confidence:.2%}, exp_ret={expected_ret:+.2f}%)"
             )
 
-            if action in ("BUY", "SELL") and confidence >= min_conf:
-                mode_tag = "[AI NEURAL] "
+            if action in ("BUY", "SELL") and confidence >= effective_min_conf:
+                mode_tag = "[AI NEURAL GOD-MODE] " if is_btc else "[AI NEURAL] "
                 reason = (
                     f"{mode_tag}DeepNN {action} on {pair} "
                     f"(conf={confidence:.1%}, exp_ret={expected_ret:+.2f}%, "
@@ -907,7 +1149,7 @@ class NeuralNetworkStrategy(StrategyBase):
                         "take_profit_price": round(take_profit_price, 2),
                         "expected_return_pct": round(expected_ret, 4),
                         "probabilities": {k: round(v, 4) for k, v in probs.items()},
-                        "model_architecture": "16-64-32-DualHead",
+                        "model_architecture": f"{NUM_FEATURES}-64-32-DualHead",
                         "train_steps": self.model.train_steps,
                         "last_loss": (
                             round(self.model.last_loss, 4)
@@ -963,7 +1205,7 @@ class NeuralNetworkStrategy(StrategyBase):
             }
 
         # Cold start mock activations if no candles scanned yet
-        dummy_x = np.zeros(16, dtype=np.float64)
+        dummy_x = np.zeros(NUM_FEATURES, dtype=np.float64)
         state = self.model.predict_with_activations(dummy_x)
         return {
             "pair": pair,
@@ -985,7 +1227,7 @@ class NeuralNetworkStrategy(StrategyBase):
             "enabled": self.enabled,
             "shadow_mode": False,
             "execution_mode": "ACTIVE_SIGNALS",
-            "model_architecture": "16 -> 64 (LayerNorm+LeakyReLU) -> 32 (LayerNorm+LeakyReLU) -> DualHead(3-Class + Return)",
+            "model_architecture": f"{NUM_FEATURES} -> 64 (LayerNorm+LeakyReLU) -> 32 (LayerNorm+LeakyReLU) -> DualHead(3-Class + Return)",
             "train_steps": self.model.train_steps,
             "last_loss": self.model.last_loss,
             "trained_pairs": sorted(list(self._trained_pairs)),

@@ -8,9 +8,10 @@ All functions expect a DataFrame with columns: [timestamp, open, high, low, clos
 
 import pandas as pd
 import numpy as np
-from ta.momentum import RSIIndicator, StochRSIIndicator
-from ta.volatility import BollingerBands, AverageTrueRange
-from ta.trend import EMAIndicator, SMAIndicator, MACD
+from ta.momentum import RSIIndicator, StochRSIIndicator, WilliamsRIndicator
+from ta.volatility import BollingerBands, AverageTrueRange, KeltnerChannel
+from ta.trend import EMAIndicator, SMAIndicator, MACD, ADXIndicator
+from ta.volume import VolumeWeightedAveragePrice, OnBalanceVolumeIndicator
 
 from backend.utils.logger import bot_logger
 
@@ -331,3 +332,266 @@ def detect_swing_lows(df: pd.DataFrame, window: int = 5) -> list:
     except Exception as e:
         bot_logger.error(f"Swing low detection failed: {e}")
         return []
+
+
+def calculate_adx(
+    df: pd.DataFrame, period: int = 14
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """
+    Calculate Average Directional Index (ADX) along with +DI and -DI.
+
+    Args:
+        df: OHLCV DataFrame with columns [timestamp, open, high, low, close, volume].
+        period: Lookback period for ADX calculation (default 14).
+
+    Returns:
+        Tuple of (adx, plus_di, minus_di) pd.Series.
+        Returns three empty Series on error or insufficient data.
+    """
+    empty = (
+        pd.Series(dtype=float),
+        pd.Series(dtype=float),
+        pd.Series(dtype=float),
+    )
+    if not _validate_dataframe(df, min_rows=period * 2):
+        return empty
+    try:
+        adx_indicator = ADXIndicator(
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            window=period,
+            fillna=False,
+        )
+        adx = adx_indicator.adx()
+        plus_di = adx_indicator.adx_pos()
+        minus_di = adx_indicator.adx_neg()
+        return (adx, plus_di, minus_di)
+    except Exception as e:
+        bot_logger.error(f"ADX({period}) calculation failed: {e}")
+        return empty
+
+
+def calculate_supertrend(
+    df: pd.DataFrame, period: int = 10, multiplier: float = 3.0
+) -> tuple[pd.Series, pd.Series]:
+    """
+    Calculate Supertrend indicator and its trend direction.
+
+    Args:
+        df: OHLCV DataFrame with columns [timestamp, open, high, low, close, volume].
+        period: ATR lookback period (default 10).
+        multiplier: ATR multiplier for upper/lower bands (default 3.0).
+
+    Returns:
+        Tuple of (supertrend, direction) pd.Series.
+        direction is 1 for bullish (uptrend), -1 for bearish (downtrend).
+        Returns two empty Series on error or insufficient data.
+    """
+    empty = (pd.Series(dtype=float), pd.Series(dtype=int))
+    if not _validate_dataframe(df, min_rows=period + 1):
+        return empty
+    try:
+        atr_series = calculate_atr(df, period=period)
+        if atr_series.empty:
+            return empty
+
+        hl2 = (df["high"] + df["low"]) / 2.0
+        basic_upper = hl2 + (multiplier * atr_series)
+        basic_lower = hl2 - (multiplier * atr_series)
+
+        final_upper = pd.Series(index=df.index, dtype=float)
+        final_lower = pd.Series(index=df.index, dtype=float)
+        supertrend = pd.Series(index=df.index, dtype=float)
+        direction = pd.Series(index=df.index, dtype=int)
+
+        n = len(df)
+        for i in range(n):
+            if i == 0:
+                final_upper.iloc[i] = basic_upper.iloc[i]
+                final_lower.iloc[i] = basic_lower.iloc[i]
+                direction.iloc[i] = 1
+                supertrend.iloc[i] = final_lower.iloc[i]
+                continue
+
+            # Upper band adjustment
+            if (
+                basic_upper.iloc[i] < final_upper.iloc[i - 1]
+                or df["close"].iloc[i - 1] > final_upper.iloc[i - 1]
+            ):
+                final_upper.iloc[i] = basic_upper.iloc[i]
+            else:
+                final_upper.iloc[i] = final_upper.iloc[i - 1]
+
+            # Lower band adjustment
+            if (
+                basic_lower.iloc[i] > final_lower.iloc[i - 1]
+                or df["close"].iloc[i - 1] < final_lower.iloc[i - 1]
+            ):
+                final_lower.iloc[i] = basic_lower.iloc[i]
+            else:
+                final_lower.iloc[i] = final_lower.iloc[i - 1]
+
+            # Determine direction & Supertrend line
+            prev_dir = direction.iloc[i - 1]
+            if prev_dir == 1:
+                if df["close"].iloc[i] < final_lower.iloc[i]:
+                    direction.iloc[i] = -1
+                    supertrend.iloc[i] = final_upper.iloc[i]
+                else:
+                    direction.iloc[i] = 1
+                    supertrend.iloc[i] = final_lower.iloc[i]
+            else:
+                if df["close"].iloc[i] > final_upper.iloc[i]:
+                    direction.iloc[i] = 1
+                    supertrend.iloc[i] = final_lower.iloc[i]
+                else:
+                    direction.iloc[i] = -1
+                    supertrend.iloc[i] = final_upper.iloc[i]
+
+        return (supertrend, direction)
+    except Exception as e:
+        bot_logger.error(
+            f"Supertrend({period}, {multiplier}) calculation failed: {e}"
+        )
+        return empty
+
+
+def calculate_vwap(df: pd.DataFrame) -> pd.Series:
+    """
+    Calculate Volume Weighted Average Price (VWAP).
+
+    Args:
+        df: OHLCV DataFrame with columns [timestamp, open, high, low, close, volume].
+
+    Returns:
+        pd.Series containing VWAP values. Returns empty Series on error.
+    """
+    if not _validate_dataframe(df, min_rows=1):
+        return pd.Series(dtype=float)
+    try:
+        vwap = VolumeWeightedAveragePrice(
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            volume=df["volume"],
+            fillna=False,
+        )
+        return vwap.volume_weighted_average_price()
+    except Exception as e:
+        bot_logger.error(f"VWAP calculation failed: {e}")
+        return pd.Series(dtype=float)
+
+
+def calculate_obv(df: pd.DataFrame) -> pd.Series:
+    """
+    Calculate On-Balance Volume (OBV).
+
+    Args:
+        df: OHLCV DataFrame with columns [timestamp, open, high, low, close, volume].
+
+    Returns:
+        pd.Series containing OBV values. Returns empty Series on error.
+    """
+    if not _validate_dataframe(df, min_rows=2):
+        return pd.Series(dtype=float)
+    try:
+        obv = OnBalanceVolumeIndicator(
+            close=df["close"],
+            volume=df["volume"],
+            fillna=False,
+        )
+        return obv.on_balance_volume()
+    except Exception as e:
+        bot_logger.error(f"OBV calculation failed: {e}")
+        return pd.Series(dtype=float)
+
+
+def calculate_williams_r(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """
+    Calculate Williams %R momentum oscillator.
+
+    Args:
+        df: OHLCV DataFrame with columns [timestamp, open, high, low, close, volume].
+        period: Lookback period (default 14).
+
+    Returns:
+        pd.Series containing Williams %R values (-100 to 0).
+        Returns empty Series on error.
+    """
+    if not _validate_dataframe(df, min_rows=period):
+        return pd.Series(dtype=float)
+    try:
+        williams = WilliamsRIndicator(
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            lbp=period,
+            fillna=False,
+        )
+        return williams.williams_r()
+    except Exception as e:
+        bot_logger.error(f"Williams %R({period}) calculation failed: {e}")
+        return pd.Series(dtype=float)
+
+
+def calculate_keltner_channel(
+    df: pd.DataFrame, period: int = 20, multiplier: float = 1.5
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """
+    Calculate Keltner Channels (upper band, middle band, lower band).
+
+    Args:
+        df: OHLCV DataFrame with columns [timestamp, open, high, low, close, volume].
+        period: Lookback period (default 20).
+        multiplier: ATR multiplier (default 1.5).
+
+    Returns:
+        Tuple of (upper, middle, lower) pd.Series.
+        Returns three empty Series on error or insufficient data.
+    """
+    empty = (
+        pd.Series(dtype=float),
+        pd.Series(dtype=float),
+        pd.Series(dtype=float),
+    )
+    if not _validate_dataframe(df, min_rows=period):
+        return empty
+    try:
+        kc = KeltnerChannel(
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            window=period,
+            multiplier=multiplier,
+            fillna=False,
+        )
+        upper = kc.keltner_channel_hband()
+        middle = kc.keltner_channel_mband()
+        lower = kc.keltner_channel_lband()
+        return (upper, middle, lower)
+    except Exception as e:
+        bot_logger.error(
+            f"KeltnerChannel({period}, {multiplier}) calculation failed: {e}"
+        )
+        return empty
+
+
+def calculate_momentum(df: pd.DataFrame, period: int = 10) -> pd.Series:
+    """
+    Calculate Momentum value (Close[t] - Close[t-period]).
+
+    Args:
+        df: OHLCV DataFrame with columns [timestamp, open, high, low, close, volume].
+        period: Momentum lookback period (default 10).
+
+    Returns:
+        pd.Series containing momentum values. Returns empty Series on error.
+    """
+    if not _validate_dataframe(df, min_rows=period + 1):
+        return pd.Series(dtype=float)
+    try:
+        return df["close"] - df["close"].shift(period)
+    except Exception as e:
+        bot_logger.error(f"Momentum({period}) calculation failed: {e}")
+        return pd.Series(dtype=float)

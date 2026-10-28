@@ -1,11 +1,17 @@
 """
 AutoTrader Pro — Trades Router
 ===============================
-GET  /api/trades/open          →  open trades
-GET  /api/trades/history       →  closed trades (paginated, filtered)
-POST /api/trade/manual         →  create a manual trade
-POST /api/trade/close/{id}     →  close a specific trade
-GET  /api/trades/export        →  CSV export of trade history
+GET  /api/trades/open               →  open trades
+GET  /api/trades/history            →  closed trades (paginated, filtered)
+POST /api/trade/manual              →  create a manual trade
+POST /api/trade/close/{id}          →  close a specific trade
+POST /api/trades/close-all          →  emergency close all open trades
+GET  /api/trades/export             →  CSV export of trade history
+GET  /api/trades/performance        →  aggregated win-rate, profit factor, Sharpe
+GET  /api/trades/positions          →  unified mark-to-market positions
+GET  /api/trades/execution-quality  →  order execution & slippage analytics
+PUT  /api/trades/{id}/stop-loss     →  update open trade stop loss
+PUT  /api/trades/{id}/take-profit   →  update open trade take profit
 """
 
 from __future__ import annotations
@@ -22,7 +28,13 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.models import Trade
-from backend.schemas import TradeCreate, TradeResponse
+from backend.schemas import (
+    TradeCreate,
+    TradeResponse,
+    StopLossUpdate,
+    TakeProfitUpdate,
+)
+from backend.engine.position_tracker import PositionTracker
 
 router = APIRouter(tags=["trades"])
 
@@ -236,6 +248,19 @@ async def create_manual_trade(
             db.add(trade)
             db.commit()
             db.refresh(trade)
+
+        # Sync with unified position tracker
+        if hasattr(engine, "position_tracker") and trade:
+            engine.position_tracker.open_position({
+                "pair": trade.pair,
+                "side": trade.side,
+                "quantity": trade.quantity,
+                "price": trade.entry_price,
+                "stop_loss": trade.stop_loss,
+                "take_profit": trade.take_profit,
+                "strategy": trade.strategy,
+                "trade_id": trade.id,
+            })
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise exc
@@ -363,3 +388,239 @@ async def export_trades(db: Session = Depends(get_db)) -> StreamingResponse:
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GET /api/trades/performance
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.get("/api/trades/performance", summary="Overall trade performance metrics")
+async def get_performance(
+    paper_mode: Optional[bool] = Query(None, description="Filter by paper_mode"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Returns aggregated metrics: win rate, profit factor, average PnL,
+    best/worst trade, and estimated Sharpe ratio across closed trades.
+    """
+    query = db.query(Trade).filter(Trade.status == "CLOSED")
+    if paper_mode is not None:
+        query = query.filter(Trade.paper_mode == paper_mode)
+    closed = query.all()
+
+    total = len(closed)
+    if total == 0:
+        return {
+            "total_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "win_rate": 0.0,
+            "total_pnl": 0.0,
+            "avg_pnl": 0.0,
+            "profit_factor": 0.0,
+            "best_trade": 0.0,
+            "worst_trade": 0.0,
+            "avg_hold_time_seconds": 0.0,
+            "sharpe_ratio": 0.0,
+        }
+
+    pnls = [float(t.pnl or 0.0) for t in closed]
+    pnl_pcts = [float(t.pnl_pct or 0.0) for t in closed]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+
+    gross_profit = sum(wins)
+    gross_loss = abs(sum(losses))
+    total_pnl = sum(pnls)
+
+    if gross_loss > 0:
+        profit_factor = round(gross_profit / gross_loss, 2)
+    elif gross_profit > 0:
+        profit_factor = round(gross_profit, 2)
+    else:
+        profit_factor = 0.0
+
+    hold_times = []
+    for t in closed:
+        if t.created_at and t.closed_at:
+            hold_times.append((t.closed_at - t.created_at).total_seconds())
+    avg_hold = round(sum(hold_times) / len(hold_times), 1) if hold_times else 0.0
+
+    # Sharpe ratio estimate (using trade return % distribution)
+    sharpe = 0.0
+    if len(pnl_pcts) > 1:
+        mean_ret = sum(pnl_pcts) / len(pnl_pcts)
+        variance = sum((x - mean_ret) ** 2 for x in pnl_pcts) / (len(pnl_pcts) - 1)
+        std_ret = variance ** 0.5
+        if std_ret > 0:
+            sharpe = round(mean_ret / std_ret, 3)
+
+    return {
+        "total_trades": total,
+        "winning_trades": len(wins),
+        "losing_trades": len(losses),
+        "win_rate": round(len(wins) / total, 4),
+        "total_pnl": round(total_pnl, 2),
+        "avg_pnl": round(total_pnl / total, 2),
+        "profit_factor": profit_factor,
+        "best_trade": round(max(pnls), 2) if pnls else 0.0,
+        "worst_trade": round(min(pnls), 2) if pnls else 0.0,
+        "avg_hold_time_seconds": avg_hold,
+        "sharpe_ratio": sharpe,
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GET /api/trades/positions
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.get("/api/trades/positions", summary="Aggregated open positions")
+async def get_positions(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Returns aggregated net positions with real-time mark-to-market valuations
+    and total portfolio exposure.
+    """
+    engine = getattr(request.app.state, "engine", None)
+    if engine and hasattr(engine, "position_tracker"):
+        # Update mark-to-market prices
+        current_prices: dict[str, float] = {}
+        if hasattr(engine, "exchange_manager"):
+            try:
+                pairs = list(engine.position_tracker.positions.keys())
+                for pair in pairs:
+                    ticker = engine.exchange_manager.get_ticker(pair)
+                    price = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker or 0)
+                    if price > 0:
+                        current_prices[pair] = price
+            except Exception:
+                pass
+        if current_prices:
+            engine.position_tracker.update_mark_to_market(current_prices)
+
+        positions = [p.to_dict() for p in engine.position_tracker.get_all_positions()]
+        total_exposure = engine.position_tracker.get_total_exposure()
+        return {
+            "positions": positions,
+            "total_exposure": round(total_exposure, 2),
+            "count": len(positions),
+        }
+
+    # Fallback to DB open trades if tracker not in memory
+    open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+    temp_tracker = PositionTracker()
+    temp_tracker.sync_from_trades(open_trades)
+    positions = [p.to_dict() for p in temp_tracker.get_all_positions()]
+    return {
+        "positions": positions,
+        "total_exposure": round(temp_tracker.get_total_exposure(), 2),
+        "count": len(positions),
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GET /api/trades/execution-quality
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.get("/api/trades/execution-quality", summary="Order execution quality and slippage")
+async def get_execution_quality(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Returns execution quality metrics: average slippage in basis points,
+    router status, and supported routing architectures.
+    """
+    engine = getattr(request.app.state, "engine", None)
+    trades = db.query(Trade).order_by(desc(Trade.created_at)).limit(100).all()
+
+    slippages = []
+    if engine and hasattr(engine, "paper_trader"):
+        for t in trades:
+            pos = engine.paper_trader.positions.get(t.id)
+            if pos and "slippage_bps" in pos:
+                slippages.append(pos["slippage_bps"])
+
+    avg_slippage_bps = round(sum(slippages) / len(slippages), 2) if slippages else 0.0
+
+    return {
+        "analyzed_trades": len(trades),
+        "average_slippage_bps": avg_slippage_bps,
+        "sample_size": len(slippages),
+        "router_status": "ACTIVE" if (engine and hasattr(engine, "order_router")) else "STANDBY",
+        "supported_order_types": ["MARKET", "LIMIT", "TWAP"],
+    }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PUT /api/trades/{trade_id}/stop-loss
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.put("/api/trades/{trade_id}/stop-loss", summary="Update trade stop loss", response_model=TradeResponse)
+async def update_stop_loss(
+    trade_id: int,
+    body: StopLossUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Trade:
+    """
+    Updates the stop loss price for an active trade in the database,
+    memory positions, and unified position tracker.
+    """
+    trade = db.query(Trade).filter(Trade.id == trade_id).first()
+    if not trade:
+        raise HTTPException(status_code=404, detail=f"Trade #{trade_id} not found.")
+    if trade.status != "OPEN":
+        raise HTTPException(status_code=400, detail=f"Trade #{trade_id} is already {trade.status}.")
+
+    trade.stop_loss = body.stop_loss
+    db.commit()
+    db.refresh(trade)
+
+    # Sync with engine subsystems
+    engine = getattr(request.app.state, "engine", None)
+    if engine:
+        if hasattr(engine, "paper_trader") and trade_id in engine.paper_trader.positions:
+            engine.paper_trader.positions[trade_id]["stop_loss"] = body.stop_loss
+        if hasattr(engine, "position_tracker"):
+            engine.position_tracker.update_stop_loss(trade.pair, body.stop_loss)
+
+    return trade
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PUT /api/trades/{trade_id}/take-profit
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.put("/api/trades/{trade_id}/take-profit", summary="Update trade take profit", response_model=TradeResponse)
+async def update_take_profit(
+    trade_id: int,
+    body: TakeProfitUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Trade:
+    """
+    Updates the take profit price for an active trade in the database,
+    memory positions, and unified position tracker.
+    """
+    trade = db.query(Trade).filter(Trade.id == trade_id).first()
+    if not trade:
+        raise HTTPException(status_code=404, detail=f"Trade #{trade_id} not found.")
+    if trade.status != "OPEN":
+        raise HTTPException(status_code=400, detail=f"Trade #{trade_id} is already {trade.status}.")
+
+    trade.take_profit = body.take_profit
+    db.commit()
+    db.refresh(trade)
+
+    # Sync with engine subsystems
+    engine = getattr(request.app.state, "engine", None)
+    if engine:
+        if hasattr(engine, "paper_trader") and trade_id in engine.paper_trader.positions:
+            engine.paper_trader.positions[trade_id]["take_profit"] = body.take_profit
+        if hasattr(engine, "position_tracker"):
+            engine.position_tracker.update_take_profit(trade.pair, body.take_profit)
+
+    return trade

@@ -24,16 +24,16 @@ from backend.utils.logger import bot_logger
 
 
 def run_unified_training(
-    days: int = 730,
-    epochs: int = 100,
+    days: int = 3650,
+    epochs: int = 150,
     lr: float = 0.005,
     horizon: int = 5,
     threshold: float = 2.0,
 ) -> dict:
     print("=================================================================")
-    print("AutoTrader Pro - Unified Model Training Pipeline")
+    print("AutoTrader Pro - Unified Neural Network Training Pipeline")
     print("=================================================================")
-    print(f"[*] Configuration: days={days}, epochs={epochs}, lr={lr}, horizon={horizon}, threshold={threshold}%")
+    print(f"[*] Configuration: days={days} (10 Years), epochs={epochs}, lr={lr}, horizon={horizon}, threshold={threshold}%")
 
     init_db()
     db = SessionLocal()
@@ -58,11 +58,11 @@ def run_unified_training(
         print("=================================================================")
         print(f"[+] Status: {res.get('status')}")
         print(f"[+] Total Samples Combined: {res.get('total_samples')}")
-        print(f"    - Macro Candles (24-Month CoinDCX): {res.get('macro_samples')}")
+        print(f"    - Macro Candles (10-Year BTC Data): {res.get('macro_samples')}")
         print(f"    - Trade Experience (SQLite DB)   : {res.get('trade_samples')} ({res.get('wins_count')} wins, {res.get('loss_count')} losses)")
         print(f"[+] Final Loss: {res.get('loss'):.4f}")
         print(f"[+] Overall Combined Accuracy: {res.get('overall_accuracy', 0)*100:.2f}%")
-        print(f"[+] 24-Month Macro Accuracy  : {res.get('macro_accuracy', 0)*100:.2f}%")
+        print(f"[+] Macro Market Regime Accuracy: {res.get('macro_accuracy', 0)*100:.2f}%")
         print(f"[+] Trade Experience Accuracy: {res.get('trade_accuracy', 0)*100:.2f}%")
         print(f"[+] Live Weights Saved: {res.get('weights_path')}")
         print("=================================================================\n")
@@ -72,9 +72,9 @@ def run_unified_training(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train unified neural network model combining macro data and trade history")
-    parser.add_argument("--days", type=int, default=730, help="Days of history to download (730 = 24 months)")
-    parser.add_argument("--epochs", type=int, default=100, help="Training epochs")
+    parser = argparse.ArgumentParser(description="Train unified neural network model combining 10-year macro data and trade history")
+    parser.add_argument("--days", type=int, default=3650, help="Days of history to download (3650 = 10 years)")
+    parser.add_argument("--epochs", type=int, default=150, help="Training epochs")
     parser.add_argument("--lr", type=float, default=0.005, help="Learning rate")
     parser.add_argument("--horizon", type=int, default=5, help="Forward return horizon bars")
     parser.add_argument("--threshold", type=float, default=2.0, help="Return threshold % for BUY/SELL labels")
