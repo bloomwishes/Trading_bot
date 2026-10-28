@@ -1,6 +1,6 @@
-# 🤖 AutoTrader Pro — Autonomous Crypto Trading System
+# 🤖 AutoTrader Pro — Autonomous Multi-Agent Crypto Trading System
 
-A full-stack, production-ready autonomous cryptocurrency trading bot with 5 strategies, real-time dashboard, LLM-powered sentiment analysis, paper trading, and market opportunity scanning.
+A full-stack, production-ready autonomous cryptocurrency trading platform engineered for **Indian Rupee (INR)** pairs on **CoinDCX** (with Binance fallback). Features a 5-agent multi-agent architecture, 12 quantitative & neural trading strategies, smart order routing (Market/Limit/TWAP), pre-trade risk gates, health watchdog monitoring, performance analytics (Sharpe/Sortino), and an interactive dark-cyberpunk React dashboard with mobile QR access.
 
 ![AutoTrader Pro](https://img.shields.io/badge/AutoTrader-Pro-00f0ff?style=for-the-badge&logo=bitcoin&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)
@@ -9,16 +9,36 @@ A full-stack, production-ready autonomous cryptocurrency trading bot with 5 stra
 
 ---
 
-## ✨ Features
+## ✨ System Architecture: 5 Autonomous Agents
 
-### 📊 5 Trading Strategies
-| Strategy | Description |
-|----------|-------------|
-| **MA Pullback** | EMA 9/21/50 with StochRSI confirmation |
-| **Breakout Hunter** | Bollinger Band squeeze breakout with volume confirmation |
-| **RSI Divergence** | Bullish/bearish divergence detection on 15m/1h candles |
-| **Sentiment LLM** | Ollama AI-powered analysis with confidence scoring |
-| **Grid Trading** | Automated grid orders with auto-rebalancing |
+AutoTrader Pro is structured into 5 coordinated agent layers:
+
+| Agent | Subsystem | Core Responsibilities |
+| :--- | :--- | :--- |
+| **Agent 1** | **Exchange Ingestion & Market Regimes** | CoinDCX REST & WebSocket streaming, Binance liquidity fallback, candle caches (15s TTL), and ADX/ATR/BB market regime detection. |
+| **Agent 2** | **Strategy Engine & Signal Intelligence** | 12 active models (Triple Deep MLPs for BTC/ETH/ALTS, Mean Reversion, Scalping, Stat Arb, Breakout, etc.) with 2x dominance conflict resolution. |
+| **Agent 3** | **Execution Engine & Order Routing** | Smart Order Router (`<5%` Market, `5-20%` Mid-Limit, `>20%` TWAP), Unified Position Tracker (VWAP & MTM), and square-root slippage simulation. |
+| **Agent 4** | **Risk Management & Capital Guard** | Pre-Trade Risk Gate (10+ rules), multi-model position sizing (Half-Kelly, Volatility, ATR damper), correlation matrix, and circuit breaker. |
+| **Agent 5** | **Monitoring, Analytics & Reporting** | System health watchdog (1-3-5-10 escalation), quantitative analytics (Sharpe, Sortino, Calmar, Expectancy), degradation detection, and Telegram alerts. |
+
+---
+
+## 📊 12 Quantitative & Neural Trading Strategies
+
+| Strategy | Type | Description |
+| :--- | :---: | :--- |
+| **Neural Network BTC** | Machine Learning | 24-feature Deep MLP with online closed-trade reinforcement learning. |
+| **Neural Network ETH** | Machine Learning | Specialized 24-feature Deep MLP optimized for Ethereum market dynamics. |
+| **Neural Network ALTS**| Machine Learning | Specialized 24-feature Deep MLP for high-beta altcoins (SOL, XRP, BNB). |
+| **Mean Reversion** | Statistical | Bollinger Band + RSI statistical extreme bounce engine. |
+| **Scalping Engine** | Microstructure | Fast EMA ribbon momentum engine with tight stops and rapid exits. |
+| **Statistical Arbitrage**| Quant / Coint | Z-score spread engine between co-integrated cryptocurrency pairs. |
+| **Breakout Hunter** | Volatility | Bollinger Band squeeze detection with volume surge confirmation (1.25x+). |
+| **MA Pullback** | Trend Following | Triple EMA (9/21/50) alignment entering on Stochastic RSI pullbacks. |
+| **RSI Divergence** | Technical | Algorithmic swing-point detection for regular bullish/bearish divergences. |
+| **Price Action** | Pattern | Algorithmic recognition of multi-candle candlestick patterns. |
+| **Grid Trading** | Market Making | Geometric dynamic grid placement with automated deviation rebalancing. |
+| **Sentiment LLM** | GenAI | Local Ollama LLM (`llama3` / `mistral`) market sentiment analysis. |
 
 ### 🛡️ Risk Management
 - Configurable position sizing (default 5% max per trade)
