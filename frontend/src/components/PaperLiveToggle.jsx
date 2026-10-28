@@ -1,9 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, X } from 'lucide-react';
 
 export default function PaperLiveToggle({ mode = 'paper', onToggle, disabled = false }) {
   const [showConfirm, setShowConfirm] = useState(false);
   const isPaper = mode === 'paper';
+
+  // Handle ESC key to dismiss modal
+  useEffect(() => {
+    if (!showConfirm) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setShowConfirm(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showConfirm]);
 
   const handleClick = () => {
     if (disabled) return;
@@ -64,59 +77,66 @@ export default function PaperLiveToggle({ mode = 'paper', onToggle, disabled = f
         </span>
       </button>
 
-      {/* Confirmation Modal */}
-      {showConfirm && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center animate-fade-in">
+      {/* Confirmation Modal rendered via Portal to escape header backdrop-filter containing block */}
+      {showConfirm && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
           {/* Backdrop */}
           <div
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            className="fixed inset-0 bg-black/80 backdrop-blur-md"
             onClick={() => setShowConfirm(false)}
           />
 
-          {/* Modal */}
-          <div className="relative glass-card p-6 max-w-md w-full mx-4 border border-neon-red/30 animate-slide-in">
+          {/* Modal Card - centrally positioned in viewport */}
+          <div className="relative glass-card p-6 sm:p-7 max-w-md w-full mx-auto my-auto rounded-2xl border border-neon-red/40 shadow-[0_0_50px_rgba(255,51,102,0.25)] animate-slide-in z-10 bg-cyber-card/95">
             <button
               onClick={() => setShowConfirm(false)}
-              className="absolute top-4 right-4 text-gray-500 hover:text-gray-300 transition-colors"
+              className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/10 transition-colors"
+              aria-label="Close dialog"
             >
               <X className="w-5 h-5" />
             </button>
 
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-full bg-neon-red/10 border border-neon-red/30 flex items-center justify-center">
-                <AlertTriangle className="w-6 h-6 text-neon-red" />
+            <div className="flex items-center gap-3.5 mb-4">
+              <div className="w-12 h-12 rounded-xl bg-neon-red/15 border border-neon-red/30 flex items-center justify-center flex-shrink-0 text-neon-red shadow-[0_0_15px_rgba(255,51,102,0.3)]">
+                <AlertTriangle className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-lg font-heading font-bold text-white">Switch to Live Mode?</h3>
-                <p className="text-sm text-gray-400">This action requires confirmation</p>
+                <h3 className="text-lg font-heading font-bold text-white tracking-wide">
+                  Switch to Live Mode?
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Real funds & active exchange orders
+                </p>
               </div>
             </div>
 
-            <div className="bg-neon-red/5 border border-neon-red/20 rounded-lg p-4 mb-6">
-              <p className="text-sm text-gray-300 leading-relaxed">
-                <span className="text-neon-red font-semibold">⚠ Warning:</span> Live mode uses{' '}
-                <span className="text-neon-red font-bold">REAL money</span> for trading. Ensure your
-                risk settings are properly configured before proceeding. All trades will be executed
-                on the live exchange.
+            <div className="bg-neon-red/10 border border-neon-red/30 rounded-xl p-4 mb-6">
+              <p className="text-sm text-gray-200 leading-relaxed">
+                <span className="text-neon-red font-bold">⚠ Warning:</span> Live mode executes orders with{' '}
+                <span className="text-neon-red font-bold underline">REAL money</span> on CoinDCX.
+                Verify your API keys, balance, and risk thresholds before proceeding.
               </p>
             </div>
 
             <div className="flex gap-3">
               <button
+                type="button"
                 onClick={() => setShowConfirm(false)}
-                className="flex-1 btn-neon"
+                className="flex-1 btn-neon py-2.5 font-medium"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={confirmLive}
-                className="flex-1 btn-danger font-bold"
+                className="flex-1 btn-danger py-2.5 font-bold shadow-[0_0_20px_rgba(255,51,102,0.4)]"
               >
                 Enable Live Mode
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
