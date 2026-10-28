@@ -354,6 +354,12 @@ class ExchangeManager:
             "place_order", pair, side, quantity, price, order_type
         )
 
+    def round_quantity(self, pair: str, quantity: float) -> float:
+        """Round order quantity to active exchange precision and step size."""
+        if hasattr(self._coindcx, "round_quantity"):
+            return self._coindcx.round_quantity(pair, quantity)
+        return round(float(quantity), 6)
+
     def cancel_order(self, order_id: str) -> bool:
         return self._try_primary_then_fallback("cancel_order", order_id)
 

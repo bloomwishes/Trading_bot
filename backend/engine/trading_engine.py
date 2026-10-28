@@ -593,23 +593,49 @@ class TradingEngine:
                         bot_logger.warning(f"[Engine] Paper execution plan failed: {res}")
             else:
                 # Live execution with smart order routing & fill polling
-                for plan in plans:
-                    if plan.delay_seconds > 0:
-                        time.sleep(min(plan.delay_seconds, 30.0))
-
+                import threading
+                for idx, plan in enumerate(plans):
+                    rounded_plan_qty = self.exchange_manager.round_quantity(pair, plan.quantity)
                     exec_price = plan.price if plan.price and plan.price > 0 else price
+
+                    if plan.delay_seconds > 0:
+                        # Offload delayed TWAP chunks to background daemon thread (never block main engine cycle)
+                        def _run_delayed(p=plan, rq=rounded_plan_qty, ep=exec_price):
+                            try:
+                                time.sleep(p.delay_seconds)
+                                self.exchange_manager.place_order(
+                                    pair=pair,
+                                    side=side,
+                                    quantity=rq,
+                                    price=ep,
+                                    order_type=p.order_type,
+                                )
+                                bot_logger.info(f"[Engine] Delayed TWAP chunk executed: {side} {rq} {pair} @ ₹{ep:.2f}")
+                            except Exception as ex:
+                                bot_logger.error(f"[Engine] Delayed TWAP chunk failed: {ex}")
+                        threading.Thread(target=_run_delayed, daemon=True).start()
+                        continue
+
                     order_res = self.exchange_manager.place_order(
                         pair=pair,
                         side=side,
-                        quantity=plan.quantity,
+                        quantity=rounded_plan_qty,
                         price=exec_price,
                         order_type=plan.order_type,
                     )
-                    order_id = None
-                    if isinstance(order_res, dict):
-                        order_id = order_res.get("id") or order_res.get("order_id")
 
-                    filled_qty = plan.quantity
+                    # Validate exchange response
+                    if (
+                        not isinstance(order_res, dict)
+                        or "error" in order_res
+                        or order_res.get("status") in ("rejected", "failed")
+                    ):
+                        err_msg = order_res.get("error") if isinstance(order_res, dict) else str(order_res)
+                        bot_logger.error(f"[Engine] Live order placement rejected for {pair}: {err_msg}")
+                        continue
+
+                    order_id = order_res.get("id") or order_res.get("order_id")
+                    filled_qty = rounded_plan_qty
                     fill_price = exec_price
 
                     # If limit order and order_id present, poll for fill
@@ -624,7 +650,7 @@ class TradingEngine:
                                     status = status_res.get("status", "open").lower()
                                     if status in ["filled", "closed", "complete"]:
                                         fill_price = float(status_res.get("price") or exec_price)
-                                        filled_qty = float(status_res.get("filled_quantity") or plan.quantity)
+                                        filled_qty = float(status_res.get("filled_quantity") or rounded_plan_qty)
                                         break
                             except Exception:
                                 pass
@@ -641,11 +667,11 @@ class TradingEngine:
                                 bot_logger.warning(f"[Engine] Cancel order error: {ce}")
 
                             if plan.fallback.upper() == "MARKET":
-                                bot_logger.info(f"[Engine] Fallback: Executing MARKET order for {plan.quantity} {pair}")
+                                bot_logger.info(f"[Engine] Fallback: Executing MARKET order for {rounded_plan_qty} {pair}")
                                 fb_res = self.exchange_manager.place_order(
                                     pair=pair,
                                     side=side,
-                                    quantity=plan.quantity,
+                                    quantity=rounded_plan_qty,
                                     price=price,
                                     order_type="MARKET",
                                 )
@@ -654,8 +680,13 @@ class TradingEngine:
                     executed_results.append(order_res)
                     filled_tranches.append({"qty": filled_qty, "price": fill_price})
 
+            # Check if any tranche actually succeeded
+            if not filled_tranches:
+                bot_logger.error(f"[Engine] No order tranches succeeded for {pair}. Aborting trade registration.")
+                return None
+
             # Calculate execution metrics
-            total_filled = sum(t["qty"] for t in filled_tranches) if filled_tranches else quantity
+            total_filled = sum(t["qty"] for t in filled_tranches)
             weighted_fill_price = (
                 sum(t["qty"] * t["price"] for t in filled_tranches) / max(total_filled, 1e-9)
                 if filled_tranches else price
@@ -682,6 +713,7 @@ class TradingEngine:
             })
 
             trade_info = {
+                "id": trade_id,
                 "pair": pair,
                 "side": side,
                 "quantity": total_filled,
@@ -835,18 +867,40 @@ class TradingEngine:
                 if isinstance(close_res, dict) and "exit_price" in close_res:
                     actual_exit_price = float(close_res["exit_price"])
             else:
-                self.exchange_manager.place_order(
+                rounded_close_qty = self.exchange_manager.round_quantity(trade.pair, quantity)
+                close_order_res = self.exchange_manager.place_order(
                     pair=trade.pair,
                     side="SELL" if trade.side == "BUY" else "BUY",
-                    quantity=quantity,
+                    quantity=rounded_close_qty,
                     price=exit_price,
                     order_type="MARKET",
                 )
+                if (
+                    not isinstance(close_order_res, dict)
+                    or "error" in close_order_res
+                    or close_order_res.get("status") in ("rejected", "failed")
+                ):
+                    err_msg = close_order_res.get("error") if isinstance(close_order_res, dict) else str(close_order_res)
+                    bot_logger.critical(
+                        f"[Engine] Live close order failed for trade #{trade.id} ({trade.pair}): {err_msg}. "
+                        "Trade will NOT be marked CLOSED in DB to prevent unmanaged open position risk."
+                    )
+                    try:
+                        from backend.monitoring.alert_manager import alert_manager
+                        alert_manager.send_alert(
+                            title=f"Live Close Order Failed #{trade.id}",
+                            message=f"Could not close {trade.side} {quantity} {trade.pair}: {err_msg}",
+                            level="CRITICAL",
+                        )
+                    except Exception:
+                        pass
+                    return  # Abort closing trade in DB!
         except Exception as e:
-            bot_logger.error(
-                f"[Engine] Failed to execute close order for "
-                f"trade {trade.id}: {e}"
+            bot_logger.critical(
+                f"[Engine] Failed to execute close order for trade #{trade.id}: {e}. "
+                "Trade will NOT be marked CLOSED in DB to prevent unmanaged position risk."
             )
+            return
 
         exit_slippage_bps = (
             round(abs(actual_exit_price - requested_exit_price) / max(requested_exit_price, 1e-9) * 10000.0, 2)

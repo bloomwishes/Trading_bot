@@ -8,6 +8,18 @@ const api = axios.create({
   },
 });
 
+// Request interceptor to inject API Key
+api.interceptors.request.use(
+  (config) => {
+    const key = localStorage.getItem('autotrader_api_key') || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_KEY) || '';
+    if (key) {
+      config.headers['X-API-Key'] = key;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
@@ -16,6 +28,17 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+export const setApiKey = (key) => {
+  if (key) {
+    localStorage.setItem('autotrader_api_key', key);
+  } else {
+    localStorage.removeItem('autotrader_api_key');
+  }
+};
+
+export const getApiKey = () => localStorage.getItem('autotrader_api_key') || '';
+export const getAuthStatus = () => api.get('/auth/status');
 
 // ==========================================
 // BOT STATUS & CONTROL

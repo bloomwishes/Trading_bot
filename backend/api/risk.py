@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.schemas import RiskSettings
 from backend.models import Trade
+from backend.utils.auth import require_api_key
 
 router = APIRouter(prefix="/api/risk", tags=["risk"])
 
@@ -55,8 +56,8 @@ async def get_risk_settings(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Failed to load risk settings: {exc}") from exc
 
 
-@router.put("", summary="Update risk settings")
-@router.put("/settings", summary="Update risk settings (alias)")
+@router.put("", summary="Update risk settings", dependencies=[Depends(require_api_key)])
+@router.put("/settings", summary="Update risk settings (alias)", dependencies=[Depends(require_api_key)])
 async def update_risk_settings(
     body: RiskSettings,
     request: Request,
@@ -180,7 +181,7 @@ async def get_limits(
 # Circuit Breaker & Emergency Actions
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@router.post("/emergency-shutdown", summary="Execute emergency shutdown")
+@router.post("/emergency-shutdown", summary="Execute emergency shutdown", dependencies=[Depends(require_api_key)])
 async def trigger_emergency_shutdown(
     request: Request,
     body: Optional[EmergencyShutdownRequest] = None,
@@ -200,7 +201,7 @@ async def trigger_emergency_shutdown(
     return res
 
 
-@router.post("/resume-trading", summary="Resume trading operations")
+@router.post("/resume-trading", summary="Resume trading operations", dependencies=[Depends(require_api_key)])
 async def resume_trading(
     request: Request,
     body: Optional[ResumeTradingRequest] = None,

@@ -132,6 +132,7 @@ def test_paper_trader_slippage_and_summary():
     trade_exact = pt.execute_trade("ETH/INR", "BUY", 0.5, 250000.0, strategy="Manual")
     assert trade_exact["entry_price"] == 250000.0
     assert trade_exact["slippage_bps"] == 0.0
+    pt.close_trade(trade_exact["id"], 251000.0, exit_reason="TAKE_PROFIT")
 
     # 2. Test execute_trade_with_slippage on MARKET order
     trade_market = pt.execute_trade_with_slippage(
@@ -156,6 +157,7 @@ def test_paper_trader_slippage_and_summary():
 
 def test_trading_engine_execution_and_exits():
     engine = TradingEngine(mode="paper")
+    engine.paper_trader.balance = 100000.0
     assert hasattr(engine, "order_router")
     assert hasattr(engine, "position_tracker")
 
@@ -182,6 +184,8 @@ def test_trading_engine_execution_and_exits():
     pos = engine.position_tracker.get_position("SOL/INR")
     assert pos is not None
     assert pos.quantity == 2.0
+    if trade_info.get("id"):
+        engine.paper_trader.close_trade(trade_info["id"], 155000.0, exit_reason="TAKE_PROFIT")
 
     # 2. Test Scalping MAX_HOLD_TIME exit
     db = SessionLocal()
@@ -238,11 +242,12 @@ def test_trading_engine_execution_and_exits():
 
 
 def test_api_endpoints():
+    auth_headers = {"X-API-Key": "test-secret-key"}
     with TestClient(app) as client:
         # 1. POST /api/bot/start - ensure all 12 strategies remain enabled!
         # First ensure bot is stopped
-        client.post("/api/bot/stop")
-        start_res = client.post("/api/bot/start")
+        client.post("/api/bot/stop", headers=auth_headers)
+        start_res = client.post("/api/bot/start", headers=auth_headers)
         assert start_res.status_code == 200
 
         engine = app.state.engine
@@ -307,12 +312,12 @@ def test_api_endpoints():
             trade_id = test_trade.id
 
             # PUT /api/trades/{id}/stop-loss
-            sl_res = client.put(f"/api/trades/{trade_id}/stop-loss", json={"stop_loss": 7850000.0})
+            sl_res = client.put(f"/api/trades/{trade_id}/stop-loss", json={"stop_loss": 7850000.0}, headers=auth_headers)
             assert sl_res.status_code == 200
             assert sl_res.json()["stop_loss"] == 7850000.0
 
             # PUT /api/trades/{id}/take-profit
-            tp_res = client.put(f"/api/trades/{trade_id}/take-profit", json={"take_profit": 8550000.0})
+            tp_res = client.put(f"/api/trades/{trade_id}/take-profit", json={"take_profit": 8550000.0}, headers=auth_headers)
             assert tp_res.status_code == 200
             assert tp_res.json()["take_profit"] == 8550000.0
 

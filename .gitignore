@@ -2,7 +2,11 @@ venv/
 node_modules/
 __pycache__/
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
 *.sqlite3
+.pytest_cache/
 logs/
 .env
 .DS_Store

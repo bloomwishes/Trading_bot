@@ -35,6 +35,8 @@ from backend.schemas import (
     TakeProfitUpdate,
 )
 from backend.engine.position_tracker import PositionTracker
+from backend.utils.auth import require_api_key
+from backend.utils.logger import bot_logger
 
 router = APIRouter(tags=["trades"])
 
@@ -152,7 +154,13 @@ async def get_trade_history(
 # POST /api/trade/manual
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@router.post("/api/trade/manual", summary="Place a manual trade", response_model=TradeResponse, status_code=201)
+@router.post(
+    "/api/trade/manual",
+    summary="Place a manual trade",
+    response_model=TradeResponse,
+    status_code=201,
+    dependencies=[Depends(require_api_key)],
+)
 async def create_manual_trade(
     body: TradeCreate,
     request: Request,
@@ -189,12 +197,37 @@ async def create_manual_trade(
     # ── Risk validation ──────────────────────────────────────────────────
     # Check max position size pct of portfolio
     current_prices = engine.exchange_manager.get_current_prices()
-    portfolio_value = engine.paper_trader.get_portfolio_value(current_prices) if engine.mode == "paper" else 10000.0
+    if engine.mode == "paper":
+        portfolio_value = engine.paper_trader.get_portfolio_value(current_prices)
+    else:
+        # Live mode: compute real net portfolio value from exchange balances
+        try:
+            balances = engine.exchange_manager.get_balances()
+            portfolio_value = 0.0
+            inr_info = balances.get("INR", {})
+            portfolio_value += inr_info.get("available", 0.0) + inr_info.get("locked", 0.0)
+            for cur, bal_dict in balances.items():
+                if cur != "INR":
+                    tot_cur = bal_dict.get("available", 0.0) + bal_dict.get("locked", 0.0)
+                    cur_price = current_prices.get(f"{cur}/INR", 0.0)
+                    portfolio_value += tot_cur * cur_price
+            if portfolio_value <= 0:
+                portfolio_value = inr_info.get("available", 0.0)
+        except Exception as exc:
+            bot_logger.error(f"[Trades API] Failed to fetch live balances for portfolio validation: {exc}")
+            portfolio_value = 0.0
+
+        if portfolio_value <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot open live trade: Exchange portfolio value is ₹0.00 or inaccessible.",
+            )
+
     max_pos = portfolio_value * (risk_mgr.max_position_pct / 100.0)
     if amount_inr > max_pos:
         raise HTTPException(
             status_code=400,
-            detail=f"Amount ₹{amount_inr:,.2f} exceeds max position size ₹{max_pos:,.2f} ({risk_mgr.max_position_pct}% of portfolio).",
+            detail=f"Amount ₹{amount_inr:,.2f} exceeds max position size ₹{max_pos:,.2f} ({risk_mgr.max_position_pct}% of portfolio ₹{portfolio_value:,.2f}).",
         )
 
     # Check max open trades
@@ -224,20 +257,34 @@ async def create_manual_trade(
                 raise HTTPException(status_code=400, detail=result["error"])
             trade = db.query(Trade).filter(Trade.id == result["id"]).first()
         else:
-            # Live Mode
+            # Live Mode: Round quantity to exchange precision and step size
+            rounded_qty = engine.exchange_manager.round_quantity(body.pair.upper(), quantity)
             result = engine.exchange_manager.place_order(
                 pair=body.pair.upper(),
                 side=body.side.upper(),
-                quantity=quantity,
+                quantity=rounded_qty,
                 price=current_price,
                 order_type="LIMIT",
             )
+            # Validate exchange response strictly
+            if (
+                not isinstance(result, dict)
+                or "error" in result
+                or result.get("status") in ("rejected", "failed")
+            ):
+                err_detail = result.get("error") if isinstance(result, dict) else str(result)
+                bot_logger.error(f"[Trades API] Exchange rejected order: {err_detail}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Exchange order rejected: {err_detail}",
+                )
+
             trade = Trade(
                 pair=body.pair.upper(),
                 strategy=strategy_name,
                 side=body.side.upper(),
                 entry_price=current_price,
-                quantity=quantity,
+                quantity=rounded_qty,
                 status="OPEN",
                 paper_mode=False,
                 stop_loss=body.stop_loss,
@@ -273,7 +320,12 @@ async def create_manual_trade(
 # POST /api/trade/close/{trade_id}
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@router.post("/api/trade/close/{trade_id}", summary="Close a trade", response_model=TradeResponse)
+@router.post(
+    "/api/trade/close/{trade_id}",
+    summary="Close a trade",
+    response_model=TradeResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def close_trade(
     trade_id: int,
     request: Request,
@@ -303,7 +355,11 @@ async def close_trade(
 # POST /api/trades/close-all
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@router.post("/api/trades/close-all", summary="Emergency exit: Close all open trades")
+@router.post(
+    "/api/trades/close-all",
+    summary="Emergency exit: Close all open trades",
+    dependencies=[Depends(require_api_key)],
+)
 async def close_all_trades(
     request: Request,
     db: Session = Depends(get_db),
@@ -558,7 +614,12 @@ async def get_execution_quality(
 # PUT /api/trades/{trade_id}/stop-loss
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@router.put("/api/trades/{trade_id}/stop-loss", summary="Update trade stop loss", response_model=TradeResponse)
+@router.put(
+    "/api/trades/{trade_id}/stop-loss",
+    summary="Update trade stop loss",
+    response_model=TradeResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def update_stop_loss(
     trade_id: int,
     body: StopLossUpdate,
@@ -594,7 +655,12 @@ async def update_stop_loss(
 # PUT /api/trades/{trade_id}/take-profit
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@router.put("/api/trades/{trade_id}/take-profit", summary="Update trade take profit", response_model=TradeResponse)
+@router.put(
+    "/api/trades/{trade_id}/take-profit",
+    summary="Update trade take profit",
+    response_model=TradeResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def update_take_profit(
     trade_id: int,
     body: TakeProfitUpdate,

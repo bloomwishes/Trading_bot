@@ -26,6 +26,7 @@ if not exist "%SCRIPT_DIR%cloudflared.exe" (
 )
 
 echo [INFO] Starting secure tunnel to your dashboard (http://localhost:3000)...
+echo [SECURITY] NOTE: Ensure you have configured API_KEY in .env before sharing the tunnel publicly!
 echo [INFO] Look for the line starting with "https://....trycloudflare.com" below.
 echo [INFO] Open that URL on your mobile phone to view and control your bot!
 echo.

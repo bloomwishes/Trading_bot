@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
+from backend.utils.auth import require_api_key
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
@@ -93,7 +94,7 @@ async def get_strategy_performance(request: Request, db: Session = Depends(get_d
     return {"performance": perf}
 
 
-@router.put("/{name}", summary="Update a strategy")
+@router.put("/{name}", summary="Update a strategy", dependencies=[Depends(require_api_key)])
 async def update_strategy(
     name: str,
     body: StrategyUpdateRequest,
@@ -228,11 +229,17 @@ async def train_neural_network(
     }
 
 
-@router.post("/neural_network/train_on_history", summary="Train neural network on database closed trade history")
+@router.post(
+    "/neural_network/train_on_history",
+    summary="Train neural network on database closed trade history",
+    dependencies=[Depends(require_api_key)],
+)
 async def train_neural_network_on_history(
     request: Request,
     epochs: int = Query(35, ge=1, le=200, description="Training epochs"),
     learning_rate: float = Query(0.005, ge=0.0001, le=0.1, description="Learning rate"),
+    model: Optional[str] = Query(None, description="Target model (BTC, ETH, ALTS)"),
+    pair: Optional[str] = Query(None, description="Target pair"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """
@@ -240,9 +247,7 @@ async def train_neural_network_on_history(
     Penalizes losing trades (HOLD target + 2.5x penalty) and rewards winning setups.
     """
     engine = request.app.state.engine
-    nn_strategy = next(
-        (s for s in engine.strategies if s.name == "Neural_Network"), None
-    )
+    nn_strategy = _get_neural_strategy(engine, pair=pair, model_name=model)
     if nn_strategy is None:
         raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
 
@@ -258,7 +263,11 @@ async def train_neural_network_on_history(
     }
 
 
-@router.post("/neural_network/train_experimental", summary="Manually train experimental neural network on 24 months CoinDCX data")
+@router.post(
+    "/neural_network/train_experimental",
+    summary="Manually train experimental neural network on 24 months CoinDCX data",
+    dependencies=[Depends(require_api_key)],
+)
 async def train_neural_network_experimental(
     request: Request,
     days: int = Query(730, ge=30, le=1000, description="Number of daily candles (730 = 24 months)"),
@@ -266,21 +275,22 @@ async def train_neural_network_experimental(
     horizon_bars: int = Query(5, ge=1, le=30, description="Forward return horizon bars"),
     return_threshold_pct: float = Query(2.0, ge=0.1, le=15.0, description="Return threshold % for BUY/SELL labels"),
     learning_rate: float = Query(0.005, ge=0.0001, le=0.1, description="Learning rate"),
+    model: Optional[str] = Query(None, description="Target model (BTC, ETH, ALTS)"),
+    pair: Optional[str] = Query("BTC/INR", description="Target pair"),
 ) -> dict[str, Any]:
     """
     Manually triggered training on CoinDCX 24 months historical BTC/INR data.
-    Generates 16 features, creates explicit HOLD/BUY/SELL labels, and saves
+    Generates features, creates explicit HOLD/BUY/SELL labels, and saves
     to nn_weights_experimental.json without touching live model or live thresholds.
     """
     engine = request.app.state.engine
-    nn_strategy = next(
-        (s for s in engine.strategies if s.name == "Neural_Network"), None
-    )
+    nn_strategy = _get_neural_strategy(engine, pair=pair, model_name=model)
     if nn_strategy is None:
         raise HTTPException(status_code=404, detail="Neural_Network strategy not registered")
 
-    # Fetch 24 months daily candles from CoinDCX
-    df = engine.exchange_manager.get_candles(pair="BTC/INR", interval="1d", limit=days)
+    target_pair = pair or "BTC/INR"
+    # Fetch daily candles from CoinDCX
+    df = engine.exchange_manager.get_candles(pair=target_pair, interval="1d", limit=days)
     if df is None or len(df) < 30:
         raise HTTPException(status_code=400, detail="Failed to fetch sufficient historical candle data from CoinDCX")
 
@@ -292,12 +302,16 @@ async def train_neural_network_experimental(
         lr=learning_rate,
     )
     return {
-        "message": "Manual experimental training complete on 24 months CoinDCX BTC/INR data. Live weights preserved.",
+        "message": f"Manual experimental training complete on CoinDCX {target_pair} data. Live weights preserved.",
         "result": result,
     }
 
 
-@router.post("/neural_network/combine_models", summary="Combine historical macro data and closed-trade experience into unified model")
+@router.post(
+    "/neural_network/combine_models",
+    summary="Combine historical macro data and closed-trade experience into unified model",
+    dependencies=[Depends(require_api_key)],
+)
 async def combine_neural_models(
     request: Request,
     days: int = Query(730, ge=30, le=1000, description="Number of daily candles (730 = 24 months)"),

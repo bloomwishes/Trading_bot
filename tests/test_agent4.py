@@ -234,14 +234,15 @@ def test_api_risk_endpoints():
         assert "min_risk_reward_ratio" in data1
 
         # 2. PUT /api/risk/settings
+        auth_headers = {"X-API-Key": "test-secret-key"}
         update_payload = {"max_position_pct": 4.5, "weekly_loss_limit_pct": 6.5}
-        r2 = client.put("/api/risk/settings", json=update_payload)
+        r2 = client.put("/api/risk/settings", json=update_payload, headers=auth_headers)
         assert r2.status_code == 200
         assert r2.json()["risk_settings"]["max_position_pct"] == 4.5
         assert r2.json()["risk_settings"]["weekly_loss_limit_pct"] == 6.5
 
         # Restore default
-        client.put("/api/risk/settings", json={"max_position_pct": 5.0, "weekly_loss_limit_pct": 7.0})
+        client.put("/api/risk/settings", json={"max_position_pct": 5.0, "weekly_loss_limit_pct": 7.0}, headers=auth_headers)
 
         # 3. GET /api/risk/portfolio-state
         r3 = client.get("/api/risk/portfolio-state")
@@ -272,7 +273,7 @@ def test_api_risk_endpoints():
         assert "max_total_exposure" in limits
 
         # 6. POST /api/risk/emergency-shutdown
-        r6 = client.post("/api/risk/emergency-shutdown", json={"reason": "Test API shutdown"})
+        r6 = client.post("/api/risk/emergency-shutdown", json={"reason": "Test API shutdown"}, headers=auth_headers)
         assert r6.status_code == 200
         assert r6.json()["status"] == "EMERGENCY_SHUTDOWN_ACTIVE"
 
@@ -281,7 +282,7 @@ def test_api_risk_endpoints():
         assert r_state.json()["trading_enabled"] is False
 
         # 7. POST /api/risk/resume-trading
-        r7 = client.post("/api/risk/resume-trading", json={"reason": "Test API resume"})
+        r7 = client.post("/api/risk/resume-trading", json={"reason": "Test API resume"}, headers=auth_headers)
         assert r7.status_code == 200
         assert r7.json()["status"] == "TRADING_RESUMED"
 

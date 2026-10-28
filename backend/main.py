@@ -1,17 +1,18 @@
 """
 AutoTrader Pro — FastAPI Application Entry Point
 =================================================
-Initializes the FastAPI app, wires up CORS, lifecycle events,
+Initializes the FastAPI app, wires up CORS, lifespan events,
 all REST routers, and WebSocket endpoints.
 
 Run with:
-    uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+    uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 """
 
 from __future__ import annotations
 
 import time
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +22,7 @@ from backend.database import init_db
 from backend.engine.trading_engine import TradingEngine
 from backend.scanner.opportunity_scanner import OpportunityScanner
 from backend.scheduler.scheduler import BotScheduler
+from backend.utils.auth import is_auth_enabled
 
 # ── API Routers ──────────────────────────────────────────────────────────────
 from backend.api.status import router as status_router
@@ -37,34 +39,12 @@ from backend.api.diagnostics import router as diagnostics_router
 
 logger = logging.getLogger("autotrader.main")
 
-# ── FastAPI App ──────────────────────────────────────────────────────────────
 
-app = FastAPI(
-    title="AutoTrader Pro API",
-    version="1.0.0",
-    description="Autonomous crypto trading bot — REST & WebSocket API (INR ₹)",
-)
+# ── Lifespan Context Manager ──────────────────────────────────────────────────
 
-# ── CORS ─────────────────────────────────────────────────────────────────────
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_origin_regex=r"https?://.*",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ── Lifecycle Events ─────────────────────────────────────────────────────────
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    """Initialise database, singletons, and record boot time."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialise database, singletons, and manage graceful shutdown."""
     logger.info("AutoTrader Pro starting up …")
 
     # 1. Database
@@ -74,7 +54,7 @@ async def startup_event() -> None:
     # 2. Trading engine (singleton)
     engine = TradingEngine()
     app.state.engine = engine
-    logger.info("TradingEngine ready  (mode=%s).", engine.mode)
+    logger.info("TradingEngine ready (mode=%s).", engine.mode)
 
     # 3. Opportunity scanner (uses the engine's exchange manager)
     scanner = OpportunityScanner(exchange_manager=engine.exchange_manager)
@@ -89,25 +69,44 @@ async def startup_event() -> None:
     # 5. Bookkeeping
     app.state.start_time = time.time()
 
-    logger.info("AutoTrader Pro API is live on port %s.", settings.API_PORT if hasattr(settings, "API_PORT") else 8000)
+    logger.info("AutoTrader Pro API is live on %s:%s.", settings.BACKEND_HOST, settings.BACKEND_PORT)
 
+    yield
 
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    """Gracefully shut down scheduler and engine."""
+    # Shutdown
     logger.info("AutoTrader Pro shutting down …")
 
-    scheduler: BotScheduler | None = getattr(app.state, "scheduler", None)
-    if scheduler is not None and scheduler.is_running:
-        scheduler.stop()
+    sched: BotScheduler | None = getattr(app.state, "scheduler", None)
+    if sched is not None and sched.is_running:
+        sched.stop()
         logger.info("Scheduler stopped.")
 
-    engine: TradingEngine | None = getattr(app.state, "engine", None)
-    if engine is not None and engine.running:
-        engine.stop()
+    eng: TradingEngine | None = getattr(app.state, "engine", None)
+    if eng is not None and eng.running:
+        eng.stop()
         logger.info("TradingEngine stopped.")
 
     logger.info("Shutdown complete.")
+
+
+# ── FastAPI App ──────────────────────────────────────────────────────────────
+
+app = FastAPI(
+    title="AutoTrader Pro API",
+    version="1.0.0",
+    description="Autonomous crypto trading bot — REST & WebSocket API (INR ₹)",
+    lifespan=lifespan,
+)
+
+# ── CORS ─────────────────────────────────────────────────────────────────────
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ── Mount Routers ────────────────────────────────────────────────────────────
@@ -125,7 +124,7 @@ app.include_router(market_router)
 app.include_router(diagnostics_router)
 
 
-# ── Root Health-check ────────────────────────────────────────────────────────
+# ── Root Health-check & Auth status ──────────────────────────────────────────
 
 @app.get("/", tags=["health"])
 async def root() -> dict:
@@ -135,4 +134,13 @@ async def root() -> dict:
         "version": "1.0.0",
         "status": "ok",
         "currency": "INR",
+        "auth_enabled": is_auth_enabled(),
+    }
+
+
+@app.get("/api/auth/status", tags=["auth"])
+async def get_auth_status() -> dict:
+    """Returns whether authentication is enabled."""
+    return {
+        "auth_enabled": is_auth_enabled(),
     }

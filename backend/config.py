@@ -20,6 +20,17 @@ load_dotenv(dotenv_path=ENV_PATH)
 class Settings:
     """Centralised settings populated from environment variables."""
 
+    # ── Security & Authentication ──────────────────────────────────────
+    API_KEY: str = os.getenv("API_KEY", "")
+    ALLOWED_ORIGINS: list[str] = [
+        origin.strip()
+        for origin in os.getenv(
+            "ALLOWED_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000,http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
+    ]
+
     # ── Exchange: CoinDCX ──────────────────────────────────────────────
     COINDCX_API_KEY: str = os.getenv("COINDCX_API_KEY", "")
     COINDCX_API_SECRET: str = os.getenv("COINDCX_API_SECRET", "")
@@ -38,7 +49,7 @@ class Settings:
     PAPER_BALANCE: float = float(os.getenv("PAPER_BALANCE", "10000"))
 
     # ── Server ─────────────────────────────────────────────────────────
-    BACKEND_HOST: str = os.getenv("BACKEND_HOST", "0.0.0.0")
+    BACKEND_HOST: str = os.getenv("BACKEND_HOST", "127.0.0.1")
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
     FRONTEND_PORT: int = int(os.getenv("FRONTEND_PORT", "3000"))
 
@@ -76,7 +87,7 @@ class Settings:
     ALERT_WEBHOOK_URL: str = os.getenv("ALERT_WEBHOOK_URL", "")
     ALERTS_ENABLED: bool = os.getenv("ALERTS_ENABLED", "true").lower() in ("true", "1", "yes")
 
-    # ── Market Data Cache & Stream Settings ────────────────────────────
+    # ── Market Data Cache & Stream Settings ────────────────────
     CANDLE_CACHE_TTL_SEC: int = int(os.getenv("CANDLE_CACHE_TTL_SEC", "15"))
     MARKET_DATA_CACHE_TTL_SEC: int = int(os.getenv("MARKET_DATA_CACHE_TTL_SEC", "15"))
     ORDERBOOK_CACHE_TTL_SEC: int = int(os.getenv("ORDERBOOK_CACHE_TTL_SEC", "5"))

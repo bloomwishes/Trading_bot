@@ -279,6 +279,38 @@ class CoinDCXClient:
             bot_logger.error(f"CoinDCX get_balances error: {exc}")
             return {}
 
+    # ── Precision & Symbol Helpers ─────────────────────────────────────
+    @staticmethod
+    def format_order_symbol(pair: str) -> str:
+        """
+        Format trading pair for CoinDCX order endpoints.
+        CoinDCX /exchange/v1/orders/create expects a clean symbol, e.g. 'BTCINR', 'ETHINR'.
+        Strips any leading 'B-', slashes, hyphens, and underscores.
+        """
+        clean = pair.strip()
+        if clean.upper().startswith("B-"):
+            clean = clean[2:]
+        return clean.replace("/", "").replace("-", "").replace("_", "").upper()
+
+    def round_quantity(self, pair: str, quantity: float) -> float:
+        """Round quantity to CoinDCX step size and decimal precision."""
+        sym = self.format_order_symbol(pair)
+        prec_map = {
+            "BTCINR": {"decimals": 6, "step": 0.000001},
+            "ETHINR": {"decimals": 5, "step": 0.00001},
+            "SOLINR": {"decimals": 3, "step": 0.001},
+            "XRPINR": {"decimals": 2, "step": 0.01},
+            "BNBINR": {"decimals": 4, "step": 0.0001},
+        }
+        info = prec_map.get(sym, {"decimals": 6, "step": None})
+        dec = info["decimals"]
+        step = info.get("step")
+        if step and step > 0:
+            rounded = round(round(float(quantity) / step) * step, dec)
+        else:
+            rounded = round(float(quantity), dec)
+        return rounded
+
     # ── Order management (private) ─────────────────────────────────────
     def place_order(
         self,
@@ -292,21 +324,22 @@ class CoinDCXClient:
 
         Returns the order dict from CoinDCX.
         """
-        symbol = pair.replace("/", "").upper()
+        symbol = self.format_order_symbol(pair)
+        rounded_qty = self.round_quantity(pair, quantity)
         body: Dict[str, Any] = {
-            "market": f"B-{symbol}",
+            "market": symbol,
             "side": side.lower(),
-            "order_type": "market_order" if order_type == "market" else "limit_order",
-            "total_quantity": quantity,
+            "order_type": "market_order" if order_type.lower() == "market" else "limit_order",
+            "total_quantity": rounded_qty,
             "timestamp": int(time.time() * 1000),
         }
-        if price is not None and order_type != "market":
-            body["price_per_unit"] = price
+        if price is not None and order_type.lower() != "market":
+            body["price_per_unit"] = round(float(price), 2)
 
         try:
             data = self._private_post("/exchange/v1/orders/create", body)
             bot_logger.info(
-                f"CoinDCX order placed: {side.upper()} {quantity} {pair} "
+                f"CoinDCX order placed: {side.upper()} {rounded_qty} {pair} (market={symbol}) "
                 f"type={order_type} → id={data.get('id', 'N/A')}"
             )
             return data

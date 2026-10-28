@@ -1,17 +1,21 @@
 """
 AutoTrader Pro — Bot Control Router
 ====================================
-POST /api/bot/start   →  start scheduler + engine
-POST /api/bot/stop    →  stop scheduler + engine
-POST /api/bot/mode    →  toggle paper / live mode
+POST /api/bot/start   →  start scheduler + engine (requires auth)
+POST /api/bot/stop    →  stop scheduler + engine (requires auth)
+POST /api/bot/mode    →  toggle paper / live mode (requires auth & live credential check)
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+
+from backend.config import settings
+from backend.utils.auth import require_api_key
+from backend.utils.logger import bot_logger
 
 router = APIRouter(prefix="/api/bot", tags=["bot"])
 
@@ -35,7 +39,7 @@ def _status_payload(engine: Any, scheduler: Any) -> dict[str, Any]:
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
-@router.post("/start", summary="Start the trading bot")
+@router.post("/start", summary="Start the trading bot", dependencies=[Depends(require_api_key)])
 async def start_bot(request: Request) -> dict[str, Any]:
     """
     Starts the bot scheduler and trading engine.
@@ -59,7 +63,7 @@ async def start_bot(request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/stop", summary="Stop the trading bot")
+@router.post("/stop", summary="Stop the trading bot", dependencies=[Depends(require_api_key)])
 async def stop_bot(request: Request) -> dict[str, Any]:
     """
     Gracefully stops the scheduler and trading engine.
@@ -85,14 +89,16 @@ async def stop_bot(request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/mode", summary="Switch paper / live mode")
+@router.post("/mode", summary="Switch paper / live mode", dependencies=[Depends(require_api_key)])
 async def change_mode(body: ModeChangeRequest, request: Request) -> dict[str, Any]:
     """
     Toggles the bot between **paper** and **live** trading mode.
 
     Safety rules:
+    - Requires valid API Key authentication.
     - ``confirm`` must be ``true``.
     - Bot must be stopped before switching to **live** mode.
+    - If switching to **live** mode, CoinDCX credentials must be configured and tested.
     - If mode is already set, returns 409.
     """
     engine = request.app.state.engine
@@ -114,8 +120,36 @@ async def change_mode(body: ModeChangeRequest, request: Request) -> dict[str, An
             detail="Stop the bot before switching to live mode.",
         )
 
+    # If switching to LIVE mode, enforce strict pre-flight checks
+    if body.mode == "live":
+        key = (settings.COINDCX_API_KEY or "").strip()
+        secret = (settings.COINDCX_API_SECRET or "").strip()
+
+        if not key or not secret or "your_coindcx_api_key" in key:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Cannot switch to LIVE mode: CoinDCX API credentials are missing or "
+                    "configured as placeholder values in .env. Please provide valid "
+                    "COINDCX_API_KEY and COINDCX_API_SECRET."
+                ),
+            )
+
+        # Test live connectivity
+        try:
+            balances = engine.exchange_manager.get_balances()
+            if not isinstance(balances, dict):
+                raise ValueError("Unexpected response from exchange when querying balance.")
+            bot_logger.info(f"[Security] Live mode pre-flight check succeeded. Balances accessible: {list(balances.keys())}")
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot switch to LIVE mode: CoinDCX connectivity check failed: {exc}",
+            )
+
     try:
         engine.mode = body.mode
+        bot_logger.info(f"[Mode] Trading mode switched to {body.mode.upper()}")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Mode switch failed: {exc}") from exc
 
