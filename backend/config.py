@@ -102,6 +102,15 @@ class Settings:
     DB_PATH: str = str(PROJECT_ROOT / "autotrader.db")
     LOG_DIR: Path = PROJECT_ROOT / "logs"
 
+    def reload_env(self) -> None:
+        """Reload configuration from .env dynamically."""
+        load_dotenv(dotenv_path=ENV_PATH, override=True)
+        self.API_KEY = os.getenv("API_KEY", "")
+        self.COINDCX_API_KEY = os.getenv("COINDCX_API_KEY", "")
+        self.COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "")
+        self.BINANCE_API_KEY = os.getenv("BINANCE_API_KEY", "")
+        self.BINANCE_API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+
     def __repr__(self) -> str:
         mode = "PAPER" if self.PAPER_MODE else "LIVE"
         return (

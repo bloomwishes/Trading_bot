@@ -60,6 +60,7 @@ export default function Layout() {
       await fetchStatus();
     } catch (err) {
       console.error('Failed to set mode:', err);
+      throw err;
     }
   };
 

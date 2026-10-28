@@ -8,6 +8,7 @@ POST /api/bot/mode    →  toggle paper / live mode (requires auth & live creden
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -95,11 +96,9 @@ async def change_mode(body: ModeChangeRequest, request: Request) -> dict[str, An
     Toggles the bot between **paper** and **live** trading mode.
 
     Safety rules:
-    - Requires valid API Key authentication.
+    - Requires valid API Key authentication (if API_KEY configured).
     - ``confirm`` must be ``true``.
-    - Bot must be stopped before switching to **live** mode.
     - If switching to **live** mode, CoinDCX credentials must be configured and tested.
-    - If mode is already set, returns 409.
     """
     engine = request.app.state.engine
     scheduler = request.app.state.scheduler
@@ -107,49 +106,67 @@ async def change_mode(body: ModeChangeRequest, request: Request) -> dict[str, An
     if not body.confirm:
         raise HTTPException(status_code=400, detail="Confirmation required. Send confirm=true.")
 
+    # Idempotent: if already in the target mode, return success
     if engine.mode == body.mode:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Bot is already in '{body.mode}' mode.",
-        )
-
-    # Switching to live requires the bot to be stopped first
-    if body.mode == "live" and engine.running:
-        raise HTTPException(
-            status_code=400,
-            detail="Stop the bot before switching to live mode.",
-        )
+        return {
+            "message": f"Bot is already in '{body.mode}' mode.",
+            **_status_payload(engine, scheduler),
+        }
 
     # If switching to LIVE mode, enforce strict pre-flight checks
     if body.mode == "live":
-        key = (settings.COINDCX_API_KEY or "").strip()
-        secret = (settings.COINDCX_API_SECRET or "").strip()
+        import dotenv
+        from pathlib import Path
+        env_path = getattr(settings, "ENV_PATH", Path(__file__).resolve().parent.parent.parent / ".env")
+        env_vals = dotenv.dotenv_values(env_path) if Path(env_path).exists() else {}
 
-        if not key or not secret or "your_coindcx_api_key" in key:
+        key = (env_vals.get("COINDCX_API_KEY") or getattr(settings, "COINDCX_API_KEY", "") or os.getenv("COINDCX_API_KEY", "")).strip()
+        secret = (env_vals.get("COINDCX_API_SECRET") or getattr(settings, "COINDCX_API_SECRET", "") or os.getenv("COINDCX_API_SECRET", "")).strip()
+
+        # Update in-memory settings
+        settings.COINDCX_API_KEY = key
+        settings.COINDCX_API_SECRET = secret
+
+        if not key or not secret or "your_coindcx_api_key" in key or "your_api_key_here" in key:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "Cannot switch to LIVE mode: CoinDCX API credentials are missing or "
-                    "configured as placeholder values in .env. Please provide valid "
-                    "COINDCX_API_KEY and COINDCX_API_SECRET."
+                    "configured as placeholder values in .env. Please provide your actual "
+                    "COINDCX_API_KEY and COINDCX_API_SECRET in the .env file."
                 ),
             )
 
-        # Test live connectivity
+        # Synchronize refreshed credentials to the exchange manager
+        if hasattr(engine, "exchange_manager") and hasattr(engine.exchange_manager, "_coindcx"):
+            engine.exchange_manager._coindcx.api_key = key
+            engine.exchange_manager._coindcx.api_secret = secret
+
+        # Test live connectivity & signature validation with CoinDCX
         try:
-            balances = engine.exchange_manager.get_balances()
-            if not isinstance(balances, dict):
-                raise ValueError("Unexpected response from exchange when querying balance.")
-            bot_logger.info(f"[Security] Live mode pre-flight check succeeded. Balances accessible: {list(balances.keys())}")
+            test_body = {"timestamp": int(time.time() * 1000)}
+            data = engine.exchange_manager._coindcx._private_post("/exchange/v1/users/balances", test_body)
+            bot_logger.info(f"[Security] CoinDCX live mode pre-flight check succeeded. Account authenticated.")
         except Exception as exc:
+            err_str = str(exc)
+            bot_logger.error(f"[Security] CoinDCX live mode pre-flight check failed: {err_str}")
+            if "401" in err_str or "Unauthorized" in err_str or "Invalid credentials" in err_str:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "CoinDCX authentication failed (401 Invalid Credentials). "
+                        "Please verify that COINDCX_API_KEY and COINDCX_API_SECRET in your .env are correct, "
+                        "and ensure Trade permissions and IP whitelist settings on CoinDCX match this device."
+                    ),
+                )
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot switch to LIVE mode: CoinDCX connectivity check failed: {exc}",
+                detail=f"Cannot switch to LIVE mode: CoinDCX connection test failed: {exc}",
             )
 
     try:
         engine.mode = body.mode
-        bot_logger.info(f"[Mode] Trading mode switched to {body.mode.upper()}")
+        bot_logger.info(f"[Mode] Trading mode switched to {body.mode.upper()} (running={engine.running})")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Mode switch failed: {exc}") from exc
 
