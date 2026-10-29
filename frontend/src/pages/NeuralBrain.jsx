@@ -11,8 +11,12 @@ import {
   AlertTriangle,
   Play,
   CheckCircle2,
+  Sparkles,
+  Eye,
+  Sliders,
 } from 'lucide-react';
 import { getNeuralLiveBrain, getNeuralLiveBrains, trainNeuralNetwork, combineNeuralModels, updateStrategy } from '../utils/api';
+import HolographicBrainViewer from '../components/HolographicBrainViewer';
 
 const FEATURE_DESCRIPTIONS = {
   rsi_norm: 'RSI (Normalized -1 to +1)',
@@ -73,6 +77,7 @@ export default function NeuralBrain() {
   const [isCombining, setIsCombining] = useState(false);
   const [combineStatus, setCombineStatus] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [displayMode, setDisplayMode] = useState('hologram'); // 'hologram' | 'both' | 'matrix'
 
   // Switch active model when pair changes or vice-versa
   const handleModelSelect = (model) => {
@@ -171,6 +176,16 @@ export default function NeuralBrain() {
   const expectedReturn = brain.expected_return_pct || 0;
   const synapses = brain.top_synapses || [];
   const reinforcements = brain.recent_reinforcements || [];
+
+  // Dual Consciousness Feeds (Jarvis = Macro BTC/Trend, Ultron = High-Volatility Alts)
+  const jarvisData =
+    allBrainsData['Neural_Network_BTC'] ||
+    (activeModelId === 'Neural_Network_BTC' ? brainData : null) ||
+    brainData;
+  const ultronData =
+    allBrainsData['Neural_Network_ALTS'] ||
+    (activeModelId === 'Neural_Network_ALTS' ? brainData : null) ||
+    brainData;
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
@@ -393,9 +408,160 @@ export default function NeuralBrain() {
       </div>
 
       {/* ========================================================================= */}
-      {/* THE LIVE INTERACTIVE BRAIN CANVAS & ACTIVATION LAYERS                    */}
+      {/* THE LIVE INTERACTIVE BRAIN VISUALIZER (AVENGERS JARVIS & ULTRON ENGINE)   */}
       {/* ========================================================================= */}
-      <div className="glass-card p-6 overflow-hidden border border-neon-cyan/30 shadow-[0_0_30px_rgba(0,240,255,0.06)] relative">
+      <div className="space-y-4">
+        {/* Visualizer Display Mode Switcher */}
+        <div className="flex items-center justify-between flex-wrap gap-3 p-3 rounded-xl bg-cyber-surface/40 border border-gray-800">
+          <div className="flex items-center gap-2">
+            <Sparkles className="text-neon-cyan animate-pulse" size={18} />
+            <h2 className="text-base sm:text-lg font-bold font-heading text-white">
+              Neural Consciousness Visualization
+            </h2>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-black/60 border border-neon-cyan/40 text-neon-cyan font-mono font-bold">
+              AVENGERS JARVIS &amp; ULTRON
+            </span>
+          </div>
+
+          <div className="flex items-center p-1 rounded-xl bg-cyber-bg border border-gray-800 text-xs">
+            <button
+              onClick={() => setDisplayMode('hologram')}
+              className={`px-3 py-1.5 font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
+                displayMode === 'hologram'
+                  ? 'bg-gradient-to-r from-neon-cyan/20 to-orange-500/20 text-white border border-white/20 shadow-[0_0_15px_rgba(0,240,255,0.2)] font-bold'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Sparkles size={13} className="text-neon-cyan" />
+              <span>3D Hologram (Avengers)</span>
+            </button>
+            <button
+              onClick={() => setDisplayMode('both')}
+              className={`px-3 py-1.5 font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
+                displayMode === 'both'
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-[0_0_12px_rgba(168,85,247,0.25)] font-bold'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Layers size={13} />
+              <span>Dual Panoramic (3D + Matrix)</span>
+            </button>
+            <button
+              onClick={() => setDisplayMode('matrix')}
+              className={`px-3 py-1.5 font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
+                displayMode === 'matrix'
+                  ? 'bg-neon-green/20 text-neon-green border border-neon-green/40 shadow-[0_0_12px_rgba(0,255,102,0.25)] font-bold'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Cpu size={13} />
+              <span>Layer Architecture Matrix</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 3D Holographic Brain Component */}
+        {(displayMode === 'hologram' || displayMode === 'both') && (
+          <div className="space-y-4">
+            <HolographicBrainViewer
+              jarvisData={jarvisData}
+              ultronData={ultronData}
+              activeModelId={activeModelId}
+              selectedPair={selectedPair}
+              isSurgeFiring={isFiring}
+              onTriggerSurge={handleFireSynapses}
+            />
+
+            {/* Executive Decision Telemetry Bar */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 rounded-xl glass-card border border-gray-800">
+              {/* Pair & Execution Regime */}
+              <div className="flex flex-col justify-center">
+                <span className="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Market Inference</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-lg font-bold font-mono text-white">{selectedPair}</span>
+                  <span className="text-xs font-mono text-neon-cyan">₹{Number(brain.price || 0).toLocaleString('en-IN')}</span>
+                </div>
+                <span className="text-[10px] text-gray-500 font-mono mt-0.5">
+                  Live Feed • LayerNorm + LeakyReLU
+                </span>
+              </div>
+
+              {/* Directional Softmax Decision */}
+              <div className="flex flex-col justify-center md:col-span-2">
+                <div className="flex items-center justify-between text-xs mb-1.5 font-mono">
+                  <span className="text-gray-400">Directional Softmax Head:</span>
+                  <div className="flex items-center gap-2 font-bold">
+                    <span
+                      className={
+                        action === 'BUY'
+                          ? 'text-neon-green'
+                          : action === 'SELL'
+                          ? 'text-neon-pink'
+                          : 'text-neon-yellow'
+                      }
+                    >
+                      {action} ({((confidence || 0) * 100).toFixed(1)}% Confidence)
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div
+                    className={`p-2 rounded-lg border text-center transition-all ${
+                      action === 'BUY'
+                        ? 'bg-neon-green/20 border-neon-green text-neon-green shadow-[0_0_12px_rgba(0,255,102,0.3)] font-bold'
+                        : 'bg-black/40 border-gray-800 text-gray-400'
+                    }`}
+                  >
+                    <div className="text-[10px]">P(BUY)</div>
+                    <div className="text-xs font-mono font-bold">{((probs.BUY || 0) * 100).toFixed(1)}%</div>
+                  </div>
+
+                  <div
+                    className={`p-2 rounded-lg border text-center transition-all ${
+                      action === 'HOLD'
+                        ? 'bg-neon-yellow/20 border-neon-yellow text-neon-yellow shadow-[0_0_12px_rgba(255,210,0,0.3)] font-bold'
+                        : 'bg-black/40 border-gray-800 text-gray-400'
+                    }`}
+                  >
+                    <div className="text-[10px]">P(HOLD)</div>
+                    <div className="text-xs font-mono font-bold">{((probs.HOLD || 0) * 100).toFixed(1)}%</div>
+                  </div>
+
+                  <div
+                    className={`p-2 rounded-lg border text-center transition-all ${
+                      action === 'SELL'
+                        ? 'bg-neon-red/20 border-neon-red text-neon-red shadow-[0_0_12px_rgba(255,0,85,0.3)] font-bold'
+                        : 'bg-black/40 border-gray-800 text-gray-400'
+                    }`}
+                  >
+                    <div className="text-[10px]">P(SELL)</div>
+                    <div className="text-xs font-mono font-bold">{((probs.SELL || 0) * 100).toFixed(1)}%</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Forward Return Projection */}
+              <div className="flex flex-col justify-center">
+                <span className="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Regression Head</span>
+                <div
+                  className={`text-xl font-bold font-mono mt-1 ${
+                    expectedReturn >= 0 ? 'text-neon-green' : 'text-neon-red'
+                  }`}
+                >
+                  {expectedReturn >= 0 ? '+' : ''}
+                  {expectedReturn.toFixed(2)}%
+                </div>
+                <span className="text-[10px] text-gray-500 font-mono mt-0.5">
+                  Target 3-candle projection (45m)
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 2D Technical Layer Architecture Matrix */}
+        {(displayMode === 'matrix' || displayMode === 'both') && (
+          <div className="glass-card p-6 overflow-hidden border border-neon-cyan/30 shadow-[0_0_30px_rgba(0,240,255,0.06)] relative">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-6 border-b border-gray-800 gap-2">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-neon-cyan animate-ping" />
@@ -626,6 +792,8 @@ export default function NeuralBrain() {
             </div>
           </div>
         </div>
+      </div>
+        )}
       </div>
 
       {/* ========================================================================= */}
