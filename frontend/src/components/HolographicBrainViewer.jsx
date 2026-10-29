@@ -377,7 +377,7 @@ export default function HolographicBrainViewer({
       const screenW = canvas.width / (window.devicePixelRatio || 1);
       const screenH = canvas.height / (window.devicePixelRatio || 1);
       const centerX = screenW / 2;
-      const centerY = screenH / 2;
+      const centerY = (screenH - 16) / 2; // Balanced vertical center above bottom telemetry
 
       // Fixed Camera: Permanently stationary front view (no revolving or zooming)
       cam.rotX = 0;
@@ -405,16 +405,20 @@ export default function HolographicBrainViewer({
       const cosX = Math.cos(cam.rotX);
       const sinX = Math.sin(cam.rotX);
 
-      // Offsets for the 3 brains based on viewMode
-      // In 'all' view: Left = BTC, Center = ETH, Right = ALTS
-      const spacing = Math.min(205, Math.max(95, screenW * 0.25));
+      // Container Auto-Fit: dynamically size brains to fill container height & width
+      const usableH = screenH - 65; // Usable vertical canvas space
+      const targetDiameter =
+        viewMode === 'all'
+          ? Math.min(218, usableH * 0.78, (screenW / 3) * 0.88)
+          : Math.min(295, usableH * 0.90);
+      const scaleMultiplier = targetDiameter / 125; // Scales brains ~1.65x to perfectly fit
+
+      const spacing = viewMode === 'all' ? Math.min(290, Math.max(140, screenW * 0.28)) : 0;
       const brainOffsets = {
         btc: viewMode === 'btc' ? 0 : viewMode === 'all' ? -spacing : -9999,
         eth: viewMode === 'eth' ? 0 : viewMode === 'all' ? 0 : -9999,
         alts: viewMode === 'alts' ? 0 : viewMode === 'all' ? spacing : -9999,
       };
-
-      const scaleMultiplier = viewMode === 'all' ? 1.0 : 1.35; // Larger when focused single brain
 
       const projectPoint = (x, y, z, offsetX = 0) => {
         const wx = (x * scaleMultiplier) + offsetX;
@@ -503,7 +507,7 @@ export default function HolographicBrainViewer({
         ctx.stroke();
 
         // 3D Floating Name Tag above brain
-        const tagY = coreProj.sy - (72 * scaleMultiplier * coreProj.scale);
+        const tagY = coreProj.sy - (78 * scaleMultiplier * coreProj.scale);
         ctx.fillStyle = cfg.colorHex;
         ctx.font = 'bold 11px monospace';
         ctx.textAlign = 'center';
