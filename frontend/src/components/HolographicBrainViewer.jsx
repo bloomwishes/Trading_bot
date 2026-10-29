@@ -1,9 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
-  Zap,
   RotateCcw,
-  Volume2,
-  VolumeX,
   Play,
   Pause,
   Maximize2,
@@ -11,21 +8,22 @@ import {
   Activity,
   Sparkles,
   Cpu,
-  CheckCircle2,
+  Zap,
 } from 'lucide-react';
 
 /**
- * HOLOGRAPHIC 3D NEURAL BRAIN VIEWER (100% REAL NEURAL NETWORK TELEMETRY)
+ * THREE NEURAL BRAINS 3D VISUALIZER
  *
- * Fully data-driven by the actual DeepTradingNN weights & activations:
- * - Layer 0: 16 Real Input Indicators (RSI, Stoch, MACD, EMAs, ATR, Volume, etc.)
- * - Layer 1: 64 Real Hidden Neurons (exact live activation values a1[0..63])
- * - Layer 2: 32 Real Hidden Neurons (exact live activation values a2[0..31])
- * - Layer 3: Real Output Head (BUY, HOLD, SELL probabilities & expected return)
- * - Real Synapses: Rendered directly from mathematically extracted active weight flows
- *   (synapses_in_to_l1, synapses_l1_to_l2, synapses_l2_to_out)
- * - NO FAKE RANDOM FIRING: Neurons only fire on real live inference ticks!
- * - Compact viewport (390px) designed for clean dashboard integration.
+ * One dedicated holographic brain for each neural engine:
+ * 1. BTC Neural Brain (Amber Gold) - Bitcoin 10Y Macro Specialist
+ * 2. ETH Neural Brain (Electric Cyan) - Ethereum Microstructure Specialist
+ * 3. ALTS Neural Brain (Neon Purple) - Altcoins Volatility Basket (SOL, XRP, BNB)
+ *
+ * Real Neural Network Data-Driven:
+ * - Neurons cleanly light up when real activation data is available.
+ * - Somas glow in direct proportion to real live activations.
+ * - No fake particle jumping or looping screensaver effects.
+ * - Smooth 3D rotation, zoom, and interactive hover inspection.
  */
 
 const DEG2RAD = Math.PI / 180;
@@ -51,392 +49,281 @@ function createFibonacciSphere(numPoints, radius) {
   return points;
 }
 
+const BRAIN_CONFIGS = [
+  {
+    key: 'btc',
+    modelId: 'Neural_Network_BTC',
+    name: 'BTC Neural Brain',
+    pair: 'BTC/INR',
+    tag: 'Macro 10Y Specialist',
+    symbol: '₿',
+    colorHex: '#ffaa00',
+    colorGlow: 'rgba(255, 170, 0, ',
+    colorBright: '#fff5cc',
+    ringColor: 'rgba(255, 170, 0, 0.15)',
+  },
+  {
+    key: 'eth',
+    modelId: 'Neural_Network_ETH',
+    name: 'ETH Neural Brain',
+    pair: 'ETH/INR',
+    tag: 'Ethereum Specialist',
+    symbol: 'Ξ',
+    colorHex: '#00f0ff',
+    colorGlow: 'rgba(0, 240, 255, ',
+    colorBright: '#e6ffff',
+    ringColor: 'rgba(0, 240, 255, 0.15)',
+  },
+  {
+    key: 'alts',
+    modelId: 'Neural_Network_ALTS',
+    name: 'ALTS Neural Brain',
+    pair: 'SOL/INR',
+    tag: 'Altcoins Basket',
+    symbol: '✦',
+    colorHex: '#d946ef',
+    colorGlow: 'rgba(217, 70, 239, ',
+    colorBright: '#fdf4ff',
+    ringColor: 'rgba(217, 70, 239, 0.15)',
+  },
+];
+
 export default function HolographicBrainViewer({
-  jarvisData = null,
-  ultronData = null,
+  btcData = null,
+  ethData = null,
+  altsData = null,
   activeModelId = 'Neural_Network_BTC',
   selectedPair = 'BTC/INR',
-  isSurgeFiring = false,
   onTriggerSurge = () => {},
 }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const animFrameRef = useRef(null);
-  const audioCtxRef = useRef(null);
 
-  // View & UI State
-  const [viewMode, setViewMode] = useState('dual'); // 'dual' | 'jarvis' | 'ultron'
+  // View state: 'all' (all 3 side-by-side) | 'btc' | 'eth' | 'alts'
+  const [viewMode, setViewMode] = useState('all');
   const [autoRotate, setAutoRotate] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hoveredNode, setHoveredNode] = useState(null);
-  const [lastInferenceTime, setLastInferenceTime] = useState(Date.now());
-  const [inferenceCount, setInferenceCount] = useState(0);
 
-  // 3D Camera State
+  // 3D Camera
   const cameraRef = useRef({
-    rotX: 10 * DEG2RAD,
-    rotY: -15 * DEG2RAD,
-    targetRotX: 10 * DEG2RAD,
-    targetRotY: -15 * DEG2RAD,
+    rotX: 8 * DEG2RAD,
+    rotY: -10 * DEG2RAD,
+    targetRotX: 8 * DEG2RAD,
+    targetRotY: -10 * DEG2RAD,
     zoom: 1.0,
     targetZoom: 1.0,
     isDragging: false,
     lastMouseX: 0,
     lastMouseY: 0,
-    autoRotSpeed: 0.0025,
+    autoRotSpeed: 0.002,
   });
 
-  // Scene Graph Data
+  // Scene state storing nodes and axons for all 3 brains
   const sceneRef = useRef({
-    jarvisNodes: [],
-    jarvisAxons: [],
-    jarvisPulses: [],
-    ultronNodes: [],
-    ultronAxons: [],
-    ultronPulses: [],
-    bridgeAxons: [],
-    bridgePulses: [],
-    lastSeq: null,
-    propagationStage: 0, // 0 = idle heatmap, 1 = input pass, 2 = L1 pass, 3 = L2 pass, 4 = output pass
-    stageStartTime: 0,
+    brains: {
+      btc: { nodes: [], axons: [] },
+      eth: { nodes: [], axons: [] },
+      alts: { nodes: [], axons: [] },
+    },
   });
 
-  // Audio tone generator on real inference
-  const playRealSignalTone = useCallback((freq = 520, duration = 0.07) => {
-    if (!soundEnabled) return;
-    try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(freq * 1.4, ctx.currentTime + duration);
-
-      gain.gain.setValueAtTime(0.03, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-      osc.stop(ctx.currentTime + duration);
-    } catch {
-      // Audio muted or not allowed
-    }
-  }, [soundEnabled]);
-
-  // Build the 3D Neural Topology
+  // Build the 3D topology for each of the three brains
   const initSceneGraph = useCallback(() => {
     const scene = sceneRef.current;
 
-    const buildBrainEntity = (isUltron = false) => {
+    BRAIN_CONFIGS.forEach((cfg) => {
       const nodes = [];
-      const colorTheme = isUltron ? 'amber' : 'cyan';
+      const key = cfg.key;
 
-      // 1. LAYER 0: 16 INPUT INDICATORS (Outer coronal ring)
-      const inputRadius = isUltron ? 120 : 115;
+      // 1. Layer 0: 16 Input Indicator Nodes (Outer coronal ring)
+      const rInput = 65;
       for (let i = 0; i < 16; i++) {
         const theta = (i / 16) * Math.PI * 2;
         nodes.push({
-          id: `${colorTheme}_in_${i}`,
+          id: `${key}_in_${i}`,
+          brainKey: key,
+          brainName: cfg.name,
           layer: 'input',
           index: i,
           name: `INDICATOR_${i}`,
-          x: Math.cos(theta) * inputRadius,
-          y: Math.sin(theta) * inputRadius * 0.75 + Math.sin(i * 1.5) * 15,
-          z: Math.sin(theta * 2) * 35,
-          baseRadius: 3.2,
-          currentRadius: 3.2,
-          activation: 0.0,
-          raw_value: 0.0,
-          flash: 0.0,
-          theme: colorTheme,
+          x: Math.cos(theta) * rInput,
+          y: Math.sin(theta) * rInput * 0.72 + Math.sin(i * 1.5) * 8,
+          z: Math.sin(theta * 2) * 22,
+          baseRadius: 2.6,
+          targetActivation: 0.05,
+          currentActivation: 0.05,
+          theme: cfg,
         });
       }
 
-      // 2. LAYER 1: 64 HIDDEN CORTEX NEURONS (Middle Fibonacci Sphere)
-      const l1Radius = isUltron ? 85 : 80;
-      const l1Coords = createFibonacciSphere(64, l1Radius);
-      l1Coords.forEach((pt, idx) => {
+      // 2. Layer 1: 64 Hidden Cortex Neurons (Middle Fibonacci Sphere)
+      const rL1 = 48;
+      const l1Points = createFibonacciSphere(64, rL1);
+      l1Points.forEach((pt, idx) => {
         nodes.push({
-          id: `${colorTheme}_l1_${idx}`,
+          id: `${key}_l1_${idx}`,
+          brainKey: key,
+          brainName: cfg.name,
           layer: 'l1',
           index: idx,
           name: `NEURON_L1_${idx}`,
           x: pt.x,
           y: pt.y,
           z: pt.z,
-          baseRadius: 2.5,
-          currentRadius: 2.5,
-          activation: 0.0,
-          flash: 0.0,
-          theme: colorTheme,
+          baseRadius: 2.2,
+          targetActivation: 0.05,
+          currentActivation: 0.05,
+          theme: cfg,
         });
       });
 
-      // 3. LAYER 2: 32 HIDDEN SYNTHESIS NEURONS (Inner Dense Sphere)
-      const l2Radius = isUltron ? 50 : 48;
-      const l2Coords = createFibonacciSphere(32, l2Radius);
-      l2Coords.forEach((pt, idx) => {
+      // 3. Layer 2: 32 Hidden Synthesis Neurons (Inner Sphere)
+      const rL2 = 30;
+      const l2Points = createFibonacciSphere(32, rL2);
+      l2Points.forEach((pt, idx) => {
         nodes.push({
-          id: `${colorTheme}_l2_${idx}`,
+          id: `${key}_l2_${idx}`,
+          brainKey: key,
+          brainName: cfg.name,
           layer: 'l2',
           index: idx,
           name: `NEURON_L2_${idx}`,
           x: pt.x,
           y: pt.y,
           z: pt.z,
-          baseRadius: 2.8,
-          currentRadius: 2.8,
-          activation: 0.0,
-          flash: 0.0,
-          theme: colorTheme,
+          baseRadius: 2.4,
+          targetActivation: 0.05,
+          currentActivation: 0.05,
+          theme: cfg,
         });
       });
 
-      // 4. LAYER 3: 3 OUTPUT DECISION NODES (BUY, HOLD, SELL)
+      // 4. Layer 3: 3 Output Decision Heads (BUY, HOLD, SELL)
       const outConfigs = [
-        { name: 'P(BUY)', offset: { x: -20, y: -10, z: 0 }, action: 'BUY' },
-        { name: 'P(HOLD)', offset: { x: 0, y: 18, z: 8 }, action: 'HOLD' },
-        { name: 'P(SELL)', offset: { x: 20, y: -10, z: 0 }, action: 'SELL' },
+        { name: 'P(BUY)', offset: { x: -14, y: -8, z: 0 }, action: 'BUY' },
+        { name: 'P(HOLD)', offset: { x: 0, y: 12, z: 6 }, action: 'HOLD' },
+        { name: 'P(SELL)', offset: { x: 14, y: -8, z: 0 }, action: 'SELL' },
       ];
-      outConfigs.forEach((cfg, idx) => {
+      outConfigs.forEach((c, idx) => {
         nodes.push({
-          id: `${colorTheme}_out_${idx}`,
+          id: `${key}_out_${idx}`,
+          brainKey: key,
+          brainName: cfg.name,
           layer: 'output',
           index: idx,
-          name: cfg.name,
-          action: cfg.action,
-          x: cfg.offset.x,
-          y: cfg.offset.y,
-          z: cfg.offset.z,
-          baseRadius: 5.0,
-          currentRadius: 5.0,
-          activation: 0.33,
-          flash: 0.0,
-          theme: colorTheme,
+          name: c.name,
+          action: c.action,
+          x: c.offset.x,
+          y: c.offset.y,
+          z: c.offset.z,
+          baseRadius: 4.2,
+          targetActivation: 0.33,
+          currentActivation: 0.33,
+          theme: cfg,
         });
       });
 
-      return { nodes };
-    };
-
-    scene.jarvisNodes = buildBrainEntity(false).nodes;
-    scene.ultronNodes = buildBrainEntity(true).nodes;
-    scene.jarvisAxons = [];
-    scene.ultronAxons = [];
-    scene.bridgeAxons = [];
-    scene.jarvisPulses = [];
-    scene.ultronPulses = [];
-    scene.bridgePulses = [];
+      scene.brains[key] = { nodes, axons: [] };
+    });
   }, []);
 
-  // Update Scene Graph with REAL LIVE INFERENCE SIGNALS
+  // Map incoming real live telemetry to the 3 brains
   useEffect(() => {
     const scene = sceneRef.current;
-    if (!scene.jarvisNodes.length) {
+    if (!scene.brains.btc.nodes.length) {
       initSceneGraph();
     }
 
-    const jBrain = jarvisData || {};
-    const uBrain = ultronData || jBrain;
+    const dataMap = {
+      btc: btcData,
+      eth: ethData,
+      alts: altsData,
+    };
 
-    // Detect if this is a fresh live inference signal
-    const currentSeq = `${jBrain.inference_seq || jBrain.timestamp || ''}_${jBrain.price || ''}_${jBrain.confidence || ''}`;
-    const isNewInference = scene.lastSeq !== null && scene.lastSeq !== currentSeq;
-    scene.lastSeq = currentSeq;
+    BRAIN_CONFIGS.forEach((cfg) => {
+      const brainState = dataMap[cfg.key] || {};
+      const brainObj = scene.brains[cfg.key];
+      if (!brainObj) return;
 
-    if (isNewInference) {
-      setLastInferenceTime(Date.now());
-      setInferenceCount((prev) => prev + 1);
-      playRealSignalTone(620, 0.1);
-    }
+      const inputs = brainState.input_features || [];
+      const l1 = brainState.layer1_activations || [];
+      const l2 = brainState.layer2_activations || [];
+      const probs = brainState.probabilities || { BUY: 0.33, HOLD: 0.34, SELL: 0.33 };
+      const selectedAction = brainState.action || 'HOLD';
 
-    // Function to populate REAL DATA into brain nodes & axons
-    const applyRealDataToBrain = (nodes, brain, isUltron = false) => {
-      const colorTheme = isUltron ? 'amber' : 'cyan';
-      const inputs = brain.input_features || [];
-      const l1 = brain.layer1_activations || [];
-      const l2 = brain.layer2_activations || [];
-      const probs = brain.probabilities || { BUY: 0.33, HOLD: 0.34, SELL: 0.33 };
-      const selectedAction = brain.action || 'HOLD';
-
-      // 1. Inputs
-      nodes.forEach((node) => {
+      // 1. Update neuron activations (Light up based on real data)
+      brainObj.nodes.forEach((node) => {
         if (node.layer === 'input') {
           const feat = inputs[node.index];
           if (feat) {
             node.name = feat.name || `INDICATOR_${node.index}`;
             node.raw_value = feat.raw_value ?? 0;
-            node.activation = Math.min(1.0, Math.max(0.05, Math.abs(feat.norm_value ?? 0.3)));
-            if (isNewInference) node.flash = 1.0;
+            node.targetActivation = Math.min(1.0, Math.max(0.04, Math.abs(feat.norm_value ?? 0.2)));
           }
         } else if (node.layer === 'l1') {
           const act = l1[node.index] !== undefined ? l1[node.index] : 0.05;
-          node.activation = Math.min(1.0, Math.max(0.04, act));
-          if (isNewInference && act > 0.4) node.flash = 1.0;
+          node.targetActivation = Math.min(1.0, Math.max(0.04, act));
         } else if (node.layer === 'l2') {
           const act = l2[node.index] !== undefined ? l2[node.index] : 0.05;
-          node.activation = Math.min(1.0, Math.max(0.05, act));
-          if (isNewInference && act > 0.45) node.flash = 1.0;
+          node.targetActivation = Math.min(1.0, Math.max(0.05, act));
         } else if (node.layer === 'output') {
-          const k = node.action;
-          const prob = probs[k] !== undefined ? probs[k] : 0.33;
-          node.activation = prob;
-          if (k === selectedAction) {
-            node.isWinning = true;
-            if (isNewInference) node.flash = 1.5;
-          } else {
-            node.isWinning = false;
-          }
+          const prob = probs[node.action] !== undefined ? probs[node.action] : 0.33;
+          node.targetActivation = prob;
+          node.isWinning = node.action === selectedAction;
         }
       });
 
-      // 2. Build REAL SYNAPSE AXONS directly from backend mathematical flows
+      // 2. Build Real Synaptic Axon Connections
       const axons = [];
-      const pulses = [];
+      const key = cfg.key;
 
-      // A) Real Inputs -> Layer 1 Synapses
-      const synInToL1 = brain.synapses_in_to_l1 || [];
-      synInToL1.forEach((syn) => {
-        if (syn.from < 16 && syn.to < 64) {
+      // Inputs -> L1 Synapses
+      const synIn = brainState.synapses_in_to_l1 || [];
+      synIn.forEach((s) => {
+        if (s.from < 16 && s.to < 64) {
           axons.push({
-            source: `${colorTheme}_in_${syn.from}`,
-            target: `${colorTheme}_l1_${syn.to}`,
-            strength: syn.strength,
-            theme: colorTheme,
+            source: `${key}_in_${s.from}`,
+            target: `${key}_l1_${s.to}`,
+            strength: s.strength || 0.1,
+            theme: cfg,
           });
-
-          // Trigger live propagation pulse on new inference
-          if (isNewInference && syn.strength > 0.02) {
-            pulses.push({
-              source: `${colorTheme}_in_${syn.from}`,
-              target: `${colorTheme}_l1_${syn.to}`,
-              progress: 0.0,
-              speed: 0.045,
-              size: 2.8 + Math.min(3, syn.strength * 2),
-              theme: colorTheme,
-            });
-          }
         }
       });
 
-      // B) Real Layer 1 -> Layer 2 Synapses
-      const synL1ToL2 = brain.synapses_l1_to_l2 || brain.top_synapses || [];
-      synL1ToL2.forEach((syn) => {
-        if (syn.from < 64 && syn.to < 32) {
+      // L1 -> L2 Synapses
+      const synL1 = brainState.synapses_l1_to_l2 || brainState.top_synapses || [];
+      synL1.forEach((s) => {
+        if (s.from < 64 && s.to < 32) {
           axons.push({
-            source: `${colorTheme}_l1_${syn.from}`,
-            target: `${colorTheme}_l2_${syn.to}`,
-            strength: syn.strength,
-            theme: colorTheme,
+            source: `${key}_l1_${s.from}`,
+            target: `${key}_l2_${s.to}`,
+            strength: s.strength || 0.1,
+            theme: cfg,
           });
-
-          if (isNewInference && syn.strength > 0.03) {
-            pulses.push({
-              source: `${colorTheme}_l1_${syn.from}`,
-              target: `${colorTheme}_l2_${syn.to}`,
-              progress: -0.25, // Staggered delay for real forward wave
-              speed: 0.04,
-              size: 3.0 + Math.min(3, syn.strength * 2),
-              theme: colorTheme,
-            });
-          }
         }
       });
 
-      // C) Real Layer 2 -> Output Decision Head Synapses
-      const synL2ToOut = brain.synapses_l2_to_out || [];
-      synL2ToOut.forEach((syn) => {
-        if (syn.from < 32 && syn.to < 3) {
+      // L2 -> Output Synapses
+      const synOut = brainState.synapses_l2_to_out || [];
+      synOut.forEach((s) => {
+        if (s.from < 32 && s.to < 3) {
           axons.push({
-            source: `${colorTheme}_l2_${syn.from}`,
-            target: `${colorTheme}_out_${syn.to}`,
-            strength: syn.strength,
-            theme: colorTheme,
+            source: `${key}_l2_${s.from}`,
+            target: `${key}_out_${s.to}`,
+            strength: s.strength || 0.2,
+            theme: cfg,
             isOutput: true,
           });
-
-          if (isNewInference) {
-            pulses.push({
-              source: `${colorTheme}_l2_${syn.from}`,
-              target: `${colorTheme}_out_${syn.to}`,
-              progress: -0.55, // Staggered arrival at decision nucleus
-              speed: 0.042,
-              size: 3.5,
-              theme: colorTheme,
-            });
-          }
         }
       });
 
-      return { axons, pulses };
-    };
-
-    const jRes = applyRealDataToBrain(scene.jarvisNodes, jBrain, false);
-    scene.jarvisAxons = jRes.axons;
-    scene.jarvisPulses = jRes.pulses;
-
-    const uRes = applyRealDataToBrain(scene.ultronNodes, uBrain, true);
-    scene.ultronAxons = uRes.axons;
-    scene.ultronPulses = uRes.pulses;
-
-    // Cross-Brain Real Correlation Bridge
-    scene.bridgeAxons = [];
-    scene.bridgePulses = [];
-    const topJL1 = (jBrain.layer1_activations || [])
-      .map((act, i) => ({ act, i }))
-      .sort((a, b) => b.act - a.act)
-      .slice(0, 5);
-    const topUL1 = (uBrain.layer1_activations || [])
-      .map((act, i) => ({ act, i }))
-      .sort((a, b) => b.act - a.act)
-      .slice(0, 5);
-
-    topJL1.forEach((jNode, idx) => {
-      const uNode = topUL1[idx];
-      if (uNode) {
-        scene.bridgeAxons.push({
-          source: `cyan_l1_${jNode.i}`,
-          target: `amber_l1_${uNode.i}`,
-          strength: (jNode.act + uNode.act) / 2,
-          theme: 'bridge',
-        });
-
-        if (isNewInference) {
-          scene.bridgePulses.push({
-            source: `cyan_l1_${jNode.i}`,
-            target: `amber_l1_${uNode.i}`,
-            progress: 0.0,
-            speed: 0.03,
-            size: 3.5,
-            theme: 'bridge',
-          });
-        }
-      }
+      brainObj.axons = axons;
     });
-  }, [jarvisData, ultronData, initSceneGraph, playRealSignalTone]);
+  }, [btcData, ethData, altsData, initSceneGraph]);
 
-  // Handle manual surge
-  const handleSurge = useCallback(() => {
-    onTriggerSurge();
-    playRealSignalTone(700, 0.15);
-  }, [onTriggerSurge, playRealSignalTone]);
-
-  useEffect(() => {
-    if (isSurgeFiring) {
-      handleSurge();
-    }
-  }, [isSurgeFiring, handleSurge]);
-
-  // Interaction handlers
+  // Mouse & Touch Controls
   const handleMouseDown = (e) => {
     const cam = cameraRef.current;
     cam.isDragging = true;
@@ -459,16 +346,17 @@ export default function HolographicBrainViewer({
       cam.lastMouseY = e.clientY;
     }
 
-    // Node Proximity Raycasting
+    // Proximity raycast for node hover
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
     let closest = null;
-    let minDist = 16;
+    let minDist = 15;
 
-    const checkNodes = (nodes) => {
-      nodes.forEach((n) => {
+    const scene = sceneRef.current;
+    Object.values(scene.brains).forEach((b) => {
+      b.nodes.forEach((n) => {
         if (n.projX !== undefined && n.projY !== undefined && n.projZ > 0) {
           const dist = Math.hypot(n.projX - mouseX, n.projY - mouseY);
           if (dist < minDist) {
@@ -477,11 +365,8 @@ export default function HolographicBrainViewer({
           }
         }
       });
-    };
+    });
 
-    const scene = sceneRef.current;
-    checkNodes(scene.jarvisNodes);
-    checkNodes(scene.ultronNodes);
     setHoveredNode(closest);
   };
 
@@ -518,17 +403,17 @@ export default function HolographicBrainViewer({
     e.preventDefault();
     const cam = cameraRef.current;
     const delta = e.deltaY < 0 ? 0.08 : -0.08;
-    cam.targetZoom = Math.max(0.7, Math.min(1.8, cam.targetZoom + delta));
+    cam.targetZoom = Math.max(0.7, Math.min(1.85, cam.targetZoom + delta));
   };
 
   const resetCamera = () => {
     const cam = cameraRef.current;
-    cam.targetRotX = 10 * DEG2RAD;
-    cam.targetRotY = -15 * DEG2RAD;
+    cam.targetRotX = 8 * DEG2RAD;
+    cam.targetRotY = -10 * DEG2RAD;
     cam.targetZoom = 1.0;
   };
 
-  // Main 60 FPS Canvas Render Loop
+  // Main 60 FPS Render Loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -541,11 +426,11 @@ export default function HolographicBrainViewer({
       const scene = sceneRef.current;
       const cam = cameraRef.current;
 
-      // Handle Container Sizing (Compact 390px Viewport)
+      // Handle Container Sizing (Compact 380px Viewport)
       const container = containerRef.current;
       if (container) {
         const width = container.clientWidth;
-        const height = isFullscreen ? window.innerHeight - 80 : 390;
+        const height = isFullscreen ? window.innerHeight - 80 : 380;
         const dpr = window.devicePixelRatio || 1;
 
         if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
@@ -563,7 +448,7 @@ export default function HolographicBrainViewer({
       const centerX = screenW / 2;
       const centerY = screenH / 2;
 
-      // Smooth Camera Easing
+      // Smooth Camera Interpolation
       cam.rotX += (cam.targetRotX - cam.rotX) * 0.12;
       cam.rotY += (cam.targetRotY - cam.rotY) * 0.12;
       cam.zoom += (cam.targetZoom - cam.zoom) * 0.12;
@@ -572,61 +457,42 @@ export default function HolographicBrainViewer({
         cam.targetRotY += cam.autoRotSpeed;
       }
 
-      // Background Clear (Cyber Stark Dark Room)
+      // Background Clear (Cyber Tech Space)
       ctx.fillStyle = '#060810';
       ctx.fillRect(0, 0, screenW, screenH);
 
-      // Radial Holographic Aura
-      const bgGrad = ctx.createRadialGradient(centerX, centerY, 60, centerX, centerY, screenW * 0.6);
-      bgGrad.addColorStop(0, 'rgba(0, 240, 255, 0.04)');
-      bgGrad.addColorStop(0.5, 'rgba(255, 130, 0, 0.03)');
+      // Subtle Background Glow
+      const bgGrad = ctx.createRadialGradient(centerX, centerY, 40, centerX, centerY, screenW * 0.6);
+      bgGrad.addColorStop(0, 'rgba(0, 240, 255, 0.03)');
+      bgGrad.addColorStop(0.5, 'rgba(217, 70, 239, 0.02)');
       bgGrad.addColorStop(1, 'rgba(6, 8, 16, 0)');
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, screenW, screenH);
 
-      // Concentric HUD Calibration Circles
-      ctx.save();
-      ctx.strokeStyle = 'rgba(0, 240, 255, 0.07)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, 175 * cam.zoom, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.strokeStyle = 'rgba(255, 120, 0, 0.05)';
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, 215 * cam.zoom, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-
       // 3D Perspective Math
-      const responsiveFocal = Math.min(520, Math.max(340, screenW * 0.75));
-      const focalLength = responsiveFocal * cam.zoom;
-      const cameraDistance = 580;
+      const focalLength = 480 * cam.zoom;
+      const cameraDistance = 540;
 
       const cosY = Math.cos(cam.rotY);
       const sinY = Math.sin(cam.rotY);
       const cosX = Math.cos(cam.rotX);
       const sinX = Math.sin(cam.rotX);
 
-      // Positioning: Responsive separation between Jarvis and Ultron
-      const baseOffset = Math.min(185, Math.max(105, screenW * 0.24));
-      let jarvisOffsetX = -baseOffset;
-      let ultronOffsetX = baseOffset;
-      let renderJarvis = true;
-      let renderUltron = true;
+      // Offsets for the 3 brains based on viewMode
+      // In 'all' view: Left = BTC, Center = ETH, Right = ALTS
+      const spacing = Math.min(205, Math.max(95, screenW * 0.25));
+      const brainOffsets = {
+        btc: viewMode === 'btc' ? 0 : viewMode === 'all' ? -spacing : -9999,
+        eth: viewMode === 'eth' ? 0 : viewMode === 'all' ? 0 : -9999,
+        alts: viewMode === 'alts' ? 0 : viewMode === 'all' ? spacing : -9999,
+      };
 
-      if (viewMode === 'jarvis') {
-        jarvisOffsetX = 0;
-        renderUltron = false;
-      } else if (viewMode === 'ultron') {
-        ultronOffsetX = 0;
-        renderJarvis = false;
-      }
+      const scaleMultiplier = viewMode === 'all' ? 1.0 : 1.35; // Larger when focused single brain
 
       const projectPoint = (x, y, z, offsetX = 0) => {
-        const wx = x + offsetX;
-        const wy = y;
-        const wz = z;
+        const wx = (x * scaleMultiplier) + offsetX;
+        const wy = y * scaleMultiplier;
+        const wz = z * scaleMultiplier;
 
         const x1 = wx * cosY + wz * sinY;
         const z1 = -wx * sinY + wz * cosY;
@@ -644,259 +510,176 @@ export default function HolographicBrainViewer({
         };
       };
 
+      const allProjectedNodes = [];
       const nodeMap = new Map();
 
-      if (renderJarvis) {
-        scene.jarvisNodes.forEach((node) => {
-          const proj = projectPoint(node.x, node.y, node.z, jarvisOffsetX);
+      // Project all visible brains
+      BRAIN_CONFIGS.forEach((cfg) => {
+        const offsetX = brainOffsets[cfg.key];
+        if (offsetX < -5000) return; // Hidden in current view
+
+        const brainObj = scene.brains[cfg.key];
+        if (!brainObj) return;
+
+        brainObj.nodes.forEach((node) => {
+          const proj = projectPoint(node.x, node.y, node.z, offsetX);
           node.projX = proj.sx;
           node.projY = proj.sy;
           node.projZ = proj.depth;
           node.scale = proj.scale;
-          nodeMap.set(node.id, node);
-        });
-      }
+          node.offsetX = offsetX;
 
-      if (renderUltron) {
-        scene.ultronNodes.forEach((node) => {
-          const proj = projectPoint(node.x, node.y, node.z, ultronOffsetX);
-          node.projX = proj.sx;
-          node.projY = proj.sy;
-          node.projZ = proj.depth;
-          node.scale = proj.scale;
-          nodeMap.set(node.id, node);
-        });
-      }
+          // Smoothly light up neuron to target activation
+          node.currentActivation += (node.targetActivation - node.currentActivation) * 0.16;
 
-      // ── DRAWING PASS (Additive Blending) ───────────────────────────────────
+          nodeMap.set(node.id, node);
+          allProjectedNodes.push(node);
+        });
+      });
+
+      // ── DRAWING PASS ───────────────────────────────────────────────────────
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
 
-      // 1. Core Luminous Nucleus (Volumetric Radiance)
-      const drawCore = (offsetX, theme) => {
+      // 1. Draw Volumetric Core for each active brain
+      BRAIN_CONFIGS.forEach((cfg) => {
+        const offsetX = brainOffsets[cfg.key];
+        if (offsetX < -5000) return;
+
         const coreProj = projectPoint(0, 0, 0, offsetX);
         if (coreProj.scale <= 0) return;
 
-        const coreRadius = (theme === 'amber' ? 44 : 40) * coreProj.scale;
+        const coreRad = 28 * scaleMultiplier * coreProj.scale;
         const grad = ctx.createRadialGradient(
           coreProj.sx,
           coreProj.sy,
           2,
           coreProj.sx,
           coreProj.sy,
-          coreRadius * 2.0
+          coreRad * 2.2
         );
 
-        if (theme === 'amber') {
-          grad.addColorStop(0, 'rgba(255, 235, 180, 0.95)');
-          grad.addColorStop(0.25, 'rgba(255, 140, 0, 0.55)');
-          grad.addColorStop(0.6, 'rgba(255, 60, 0, 0.2)');
-          grad.addColorStop(1, 'rgba(255, 20, 0, 0)');
-        } else {
-          grad.addColorStop(0, 'rgba(235, 255, 255, 0.95)');
-          grad.addColorStop(0.25, 'rgba(0, 240, 255, 0.55)');
-          grad.addColorStop(0.6, 'rgba(0, 110, 255, 0.2)');
-          grad.addColorStop(1, 'rgba(0, 50, 180, 0)');
-        }
+        grad.addColorStop(0, `${cfg.colorGlow}0.95)`);
+        grad.addColorStop(0.35, `${cfg.colorGlow}0.35)`);
+        grad.addColorStop(1, `${cfg.colorGlow}0)`);
 
         ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.arc(coreProj.sx, coreProj.sy, coreRadius * 2.0, 0, Math.PI * 2);
+        ctx.arc(coreProj.sx, coreProj.sy, coreRad * 2.2, 0, Math.PI * 2);
         ctx.fill();
 
-        // Orbital rings
-        for (let r = 0; r < 3; r++) {
-          const ringRad = (18 + r * 12) * coreProj.scale;
-          ctx.strokeStyle =
-            theme === 'amber'
-              ? `rgba(255, 160, 20, ${0.15 + r * 0.05})`
-              : `rgba(0, 240, 255, ${0.18 + r * 0.05})`;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.ellipse(coreProj.sx, coreProj.sy, ringRad, ringRad * 0.4, (frameCount * 0.008 * (r % 2 === 0 ? 1 : -1)) + r, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-      };
+        // Subtle Orbital Ring
+        ctx.strokeStyle = cfg.ringColor;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(coreProj.sx, coreProj.sy, coreRad * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
 
-      if (renderJarvis) drawCore(jarvisOffsetX, 'cyan');
-      if (renderUltron) drawCore(ultronOffsetX, 'amber');
+        // 3D Floating Name Tag above brain
+        const tagY = coreProj.sy - (72 * scaleMultiplier * coreProj.scale);
+        ctx.fillStyle = cfg.colorHex;
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${cfg.symbol} ${cfg.name.toUpperCase()}`, coreProj.sx, tagY);
+      });
 
-      // 2. Draw Real Synaptic Axons (Direct weight lines)
-      const drawAxonList = (axons) => {
-        axons.forEach((axon) => {
+      // 2. Draw Real Synaptic Axon Connections
+      BRAIN_CONFIGS.forEach((cfg) => {
+        const offsetX = brainOffsets[cfg.key];
+        if (offsetX < -5000) return;
+
+        const brainObj = scene.brains[cfg.key];
+        if (!brainObj) return;
+
+        brainObj.axons.forEach((axon) => {
           const s = nodeMap.get(axon.source);
           const t = nodeMap.get(axon.target);
           if (!s || !t || s.scale <= 0 || t.scale <= 0) return;
 
-          const strength = axon.strength || 0.1;
-          const avgDepth = (s.projZ + t.projZ) / 2;
-          const depthAlpha = Math.max(0.12, Math.min(0.9, (avgDepth + 250) / 500));
-          const alpha = Math.min(0.85, (0.15 + strength * 0.7)) * depthAlpha;
+          // Axon glows when connected neurons are lit
+          const avgAct = (s.currentActivation + t.currentActivation) / 2;
+          if (avgAct < 0.12) return; // Keep inactive axons invisible/clean
 
-          ctx.lineWidth = (axon.isOutput ? 1.6 : 1.0) * s.scale;
-
-          if (axon.theme === 'bridge') {
-            const bridgeGrad = ctx.createLinearGradient(s.projX, s.projY, t.projX, t.projY);
-            bridgeGrad.addColorStop(0, `rgba(0, 240, 255, ${alpha})`);
-            bridgeGrad.addColorStop(0.5, `rgba(255, 0, 229, ${alpha * 1.2})`);
-            bridgeGrad.addColorStop(1, `rgba(255, 140, 0, ${alpha})`);
-            ctx.strokeStyle = bridgeGrad;
-          } else if (axon.theme === 'amber') {
-            ctx.strokeStyle = `rgba(255, 130, 20, ${alpha})`;
-          } else {
-            ctx.strokeStyle = `rgba(0, 210, 255, ${alpha})`;
-          }
+          const alpha = Math.min(0.75, avgAct * 0.85);
+          ctx.lineWidth = (axon.isOutput ? 1.4 : 0.8) * s.scale;
+          ctx.strokeStyle = `${cfg.colorGlow}${alpha})`;
 
           ctx.beginPath();
           ctx.moveTo(s.projX, s.projY);
           ctx.lineTo(t.projX, t.projY);
           ctx.stroke();
         });
-      };
+      });
 
-      if (renderJarvis) drawAxonList(scene.jarvisAxons);
-      if (renderUltron) drawAxonList(scene.ultronAxons);
-      if (viewMode === 'dual') drawAxonList(scene.bridgeAxons);
+      // 3. Draw Real Neurons (Turn on and light up cleanly!)
+      allProjectedNodes.sort((a, b) => b.projZ - a.projZ);
 
-      // 3. Draw Real Action Potential Pulses (Only on Real Forward Inference)
-      const updatePulses = (pulses) => {
-        for (let i = pulses.length - 1; i >= 0; i--) {
-          const p = pulses[i];
-          p.progress += p.speed;
+      allProjectedNodes.forEach((node) => {
+        if (node.scale <= 0) return;
 
-          const s = nodeMap.get(p.source);
-          const t = nodeMap.get(p.target);
+        const act = node.currentActivation || 0.05;
+        const isLit = act > 0.18; // Neuron is turned ON
+        const isHigh = act > 0.55; // High excitation
+        const cfg = node.theme;
+        const isHovered = hoveredNode && hoveredNode.id === node.id;
 
-          if (!s || !t || p.progress >= 1.0) {
-            if (t && p.progress >= 1.0) {
-              t.flash = 1.0;
-            }
-            pulses.splice(i, 1);
-            continue;
-          }
+        // Radius expands smoothly when turned on
+        const targetR = (node.baseRadius * scaleMultiplier + act * 2.8) * node.scale;
 
-          if (p.progress < 0) continue; // Staggered delay waiting to fire
-
-          const px = s.projX + (t.projX - s.projX) * p.progress;
-          const py = s.projY + (t.projY - s.projY) * p.progress;
-          const rad = p.size * ((s.scale + t.scale) / 2);
-
-          const pGrad = ctx.createRadialGradient(px, py, 1, px, py, rad * 3);
-          if (p.theme === 'bridge') {
-            pGrad.addColorStop(0, '#ffffff');
-            pGrad.addColorStop(0.4, 'rgba(255, 0, 229, 0.9)');
-            pGrad.addColorStop(1, 'rgba(0, 240, 255, 0)');
-          } else if (p.theme === 'amber') {
-            pGrad.addColorStop(0, '#ffffff');
-            pGrad.addColorStop(0.4, 'rgba(255, 170, 0, 0.95)');
-            pGrad.addColorStop(1, 'rgba(255, 60, 0, 0)');
-          } else {
-            pGrad.addColorStop(0, '#ffffff');
-            pGrad.addColorStop(0.4, 'rgba(0, 240, 255, 0.95)');
-            pGrad.addColorStop(1, 'rgba(0, 100, 255, 0)');
-          }
-
-          ctx.fillStyle = pGrad;
-          ctx.beginPath();
-          ctx.arc(px, py, rad * 3, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.fillStyle = '#ffffff';
-          ctx.beginPath();
-          ctx.arc(px, py, rad * 0.9, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      };
-
-      if (renderJarvis) updatePulses(scene.jarvisPulses);
-      if (renderUltron) updatePulses(scene.ultronPulses);
-      if (viewMode === 'dual') updatePulses(scene.bridgePulses);
-
-      // 4. Draw Real Neurons (100% Data-Driven Somas)
-      const drawNodes = (nodes) => {
-        const sorted = [...nodes].sort((a, b) => b.projZ - a.projZ);
-
-        sorted.forEach((node) => {
-          if (node.scale <= 0) return;
-
-          node.flash *= 0.92;
-          const act = node.activation || 0.05;
-          const isHigh = act > 0.55;
-          const isAmber = node.theme === 'amber';
-          const isHovered = hoveredNode && hoveredNode.id === node.id;
-
-          // Target radius scales directly with REAL activation
-          const baseRad = (node.baseRadius + act * 3.5 + node.flash * 2.5) * node.scale;
-          node.currentRadius = baseRad;
-
-          // Glow Halo
-          const glowRad = Math.max(6, baseRad * (isHigh || node.isWinning ? 3.0 : 1.8));
+        // Outer Glow Aura (Only shines when neuron is turned on!)
+        if (isLit || node.isWinning) {
+          const glowR = Math.max(5, targetR * (isHigh || node.isWinning ? 3.0 : 1.8));
           const nodeGrad = ctx.createRadialGradient(
             node.projX,
             node.projY,
-            baseRad * 0.2,
+            targetR * 0.2,
             node.projX,
             node.projY,
-            glowRad
+            glowR
           );
 
-          if (isAmber) {
-            nodeGrad.addColorStop(
-              0,
-              isHigh || node.flash > 0.2 ? 'rgba(255, 255, 220, 1)' : 'rgba(255, 170, 30, 0.85)'
-            );
-            nodeGrad.addColorStop(0.4, 'rgba(255, 110, 0, 0.5)');
-            nodeGrad.addColorStop(1, 'rgba(255, 40, 0, 0)');
-          } else {
-            nodeGrad.addColorStop(
-              0,
-              isHigh || node.flash > 0.2 ? 'rgba(235, 255, 255, 1)' : 'rgba(0, 240, 255, 0.85)'
-            );
-            nodeGrad.addColorStop(0.4, 'rgba(0, 150, 255, 0.5)');
-            nodeGrad.addColorStop(1, 'rgba(0, 70, 255, 0)');
-          }
+          nodeGrad.addColorStop(0, `${cfg.colorGlow}${isHigh ? 0.95 : 0.75})`);
+          nodeGrad.addColorStop(0.5, `${cfg.colorGlow}0.35)`);
+          nodeGrad.addColorStop(1, `${cfg.colorGlow}0)`);
 
           ctx.fillStyle = nodeGrad;
           ctx.beginPath();
-          ctx.arc(node.projX, node.projY, glowRad, 0, Math.PI * 2);
+          ctx.arc(node.projX, node.projY, glowR, 0, Math.PI * 2);
           ctx.fill();
+        }
 
-          // Solid Photon Soma
-          ctx.fillStyle =
-            isHigh || node.flash > 0.2
-              ? '#ffffff'
-              : isAmber
-              ? 'rgba(255, 180, 50, 0.9)'
-              : 'rgba(80, 240, 255, 0.9)';
-          ctx.beginPath();
-          ctx.arc(node.projX, node.projY, Math.max(1.4, baseRad * 0.6), 0, Math.PI * 2);
-          ctx.fill();
+        // Solid Neuron Soma
+        ctx.fillStyle = isLit || node.isWinning ? cfg.colorBright : 'rgba(100, 116, 139, 0.35)';
+        ctx.beginPath();
+        ctx.arc(node.projX, node.projY, Math.max(1.2, targetR * 0.65), 0, Math.PI * 2);
+        ctx.fill();
 
-          // Reticle for Hovered or Winning Decision Node
-          if (isHovered || node.isWinning) {
-            ctx.strokeStyle = node.isWinning ? '#00ff88' : '#ffffff';
-            ctx.lineWidth = 1.2;
-            const size = baseRad * 2.4 + 4;
-            ctx.strokeRect(node.projX - size / 2, node.projY - size / 2, size, size);
-          }
-        });
-      };
-
-      if (renderJarvis) drawNodes(scene.jarvisNodes);
-      if (renderUltron) drawNodes(scene.ultronNodes);
+        // Winning Decision Node Reticle
+        if (node.isWinning) {
+          ctx.strokeStyle = '#00ff88';
+          ctx.lineWidth = 1.2;
+          const boxSize = targetR * 2.5 + 4;
+          ctx.strokeRect(node.projX - boxSize / 2, node.projY - boxSize / 2, boxSize, boxSize);
+        } else if (isHovered) {
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.0;
+          const boxSize = targetR * 2.2 + 3;
+          ctx.strokeRect(node.projX - boxSize / 2, node.projY - boxSize / 2, boxSize, boxSize);
+        }
+      });
 
       ctx.restore();
 
-      // 5. Stark Tech Holographic Tooltip for Hovered Real Node
+      // 4. Hover Tooltip for Real Neuron
       if (hoveredNode && hoveredNode.projX !== undefined) {
         ctx.save();
         const hn = hoveredNode;
-        const boxX = Math.min(screenW - 205, hn.projX + 18);
-        const boxY = Math.max(15, hn.projY - 40);
-        const boxW = 190;
-        const boxH = 68;
+        const boxX = Math.min(screenW - 195, hn.projX + 14);
+        const boxY = Math.max(12, hn.projY - 35);
+        const boxW = 180;
+        const boxH = 62;
 
-        ctx.strokeStyle = hn.theme === 'amber' ? '#ff9900' : '#00f0ff';
+        ctx.strokeStyle = hn.theme.colorHex;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(hn.projX, hn.projY);
@@ -904,30 +687,33 @@ export default function HolographicBrainViewer({
         ctx.stroke();
 
         ctx.fillStyle = 'rgba(8, 12, 22, 0.94)';
-        ctx.strokeStyle = hn.theme === 'amber' ? 'rgba(255, 140, 0, 0.6)' : 'rgba(0, 240, 255, 0.6)';
+        ctx.strokeStyle = `${hn.theme.colorGlow}0.6)`;
         ctx.beginPath();
         ctx.roundRect(boxX, boxY, boxW, boxH, 6);
         ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = hn.theme === 'amber' ? '#ffaa00' : '#00f0ff';
+        ctx.fillStyle = hn.theme.colorHex;
         ctx.font = 'bold 9px monospace';
-        ctx.fillText(`REAL ${hn.theme.toUpperCase()} // ${hn.layer.toUpperCase()}`, boxX + 8, boxY + 16);
+        ctx.textAlign = 'left';
+        ctx.fillText(`${hn.theme.symbol} ${hn.brainName.toUpperCase()}`, boxX + 8, boxY + 15);
 
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 11px sans-serif';
-        ctx.fillText(hn.name, boxX + 8, boxY + 32);
+        ctx.fillText(hn.name, boxX + 8, boxY + 30);
 
         ctx.fillStyle = '#94a3b8';
         ctx.font = '10px monospace';
-        ctx.fillText(`Activation: ${(hn.activation * 100).toFixed(1)}%`, boxX + 8, boxY + 47);
+        const pct = ((hn.currentActivation || 0) * 100).toFixed(1);
+        ctx.fillText(`Activation: ${pct}%`, boxX + 8, boxY + 44);
 
-        ctx.fillStyle = hn.activation > 0.5 ? '#00ff88' : '#64748b';
+        ctx.fillStyle = hn.currentActivation > 0.18 ? '#00ff88' : '#64748b';
         ctx.fillText(
-          hn.activation > 0.5 ? '● EXCITATORY (LIVE FIRING)' : '○ BASELINE (RESTING)',
+          hn.currentActivation > 0.18 ? '● LIGHT ON (ACTIVATED)' : '○ LIGHT OFF (RESTING)',
           boxX + 8,
-          boxY + 60
+          boxY + 56
         );
+
         ctx.restore();
       }
 
@@ -945,69 +731,77 @@ export default function HolographicBrainViewer({
   return (
     <div
       ref={containerRef}
-      className={`glass-card relative overflow-hidden border border-neon-cyan/40 shadow-[0_0_30px_rgba(0,240,255,0.08)] transition-all ${
+      className={`glass-card relative overflow-hidden border border-neon-cyan/30 shadow-[0_0_30px_rgba(0,240,255,0.06)] transition-all ${
         isFullscreen ? 'fixed inset-4 z-50 bg-[#060810]/95' : 'w-full'
       }`}
     >
-      {/* Compact Header Bar */}
+      {/* Top Controls Header */}
       <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-gray-800/80 bg-black/50 backdrop-blur-md gap-2">
-        {/* Live Signal Indicator */}
+        {/* Title & Live Status */}
         <div className="flex items-center gap-2">
           <span className="flex h-2 w-2 relative">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-neon-green opacity-75"></span>
             <span className="relative inline-flex rounded-full h-2 w-2 bg-neon-green"></span>
           </span>
-          <span className="text-[11px] font-bold font-mono text-neon-green uppercase tracking-wide">
-            LIVE SIGNAL FEED
+          <span className="text-xs font-bold font-heading text-white">
+            TRI-ENGINE NEURAL BRAINS
           </span>
           <span className="text-[10px] text-gray-400 font-mono hidden sm:inline">
-            | Real Weights &amp; Activations
+            (BTC • ETH • ALTS)
           </span>
         </div>
 
-        {/* View Switcher: Dual vs Jarvis vs Ultron */}
-        <div className="flex items-center p-0.5 rounded-lg bg-cyber-bg/90 border border-gray-800 text-[11px]">
+        {/* View Switcher: All 3 vs BTC vs ETH vs ALTS */}
+        <div className="flex items-center p-0.5 rounded-lg bg-cyber-bg border border-gray-800 text-[11px]">
           <button
-            onClick={() => setViewMode('dual')}
+            onClick={() => setViewMode('all')}
             className={`px-2.5 py-1 font-semibold rounded transition-all flex items-center gap-1 ${
-              viewMode === 'dual'
-                ? 'bg-gradient-to-r from-neon-cyan/30 to-orange-500/30 text-white border border-white/20'
-                : 'text-gray-400 hover:text-gray-200'
+              viewMode === 'all'
+                ? 'bg-gradient-to-r from-amber-500/20 via-cyan-500/20 to-purple-500/20 text-white border border-white/20'
+                : 'text-gray-400 hover:text-white'
             }`}
           >
             <Sparkles size={11} className="text-neon-cyan" />
-            <span>Avengers Dual</span>
+            <span>All 3 Brains</span>
           </button>
           <button
-            onClick={() => setViewMode('jarvis')}
-            className={`px-2.5 py-1 font-semibold rounded transition-all flex items-center gap-1 ${
-              viewMode === 'jarvis'
-                ? 'bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/40'
-                : 'text-gray-400 hover:text-gray-200'
+            onClick={() => setViewMode('btc')}
+            className={`px-2 py-1 font-semibold rounded transition-all flex items-center gap-1 ${
+              viewMode === 'btc'
+                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                : 'text-gray-400 hover:text-white'
             }`}
           >
-            <Cpu size={11} />
-            <span>JARVIS (Macro)</span>
+            <span>₿ BTC</span>
           </button>
           <button
-            onClick={() => setViewMode('ultron')}
-            className={`px-2.5 py-1 font-semibold rounded transition-all flex items-center gap-1 ${
-              viewMode === 'ultron'
-                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/40'
-                : 'text-gray-400 hover:text-gray-200'
+            onClick={() => setViewMode('eth')}
+            className={`px-2 py-1 font-semibold rounded transition-all flex items-center gap-1 ${
+              viewMode === 'eth'
+                ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40'
+                : 'text-gray-400 hover:text-white'
             }`}
           >
-            <Zap size={11} />
-            <span>ULTRON (Alts)</span>
+            <span>Ξ ETH</span>
+          </button>
+          <button
+            onClick={() => setViewMode('alts')}
+            className={`px-2 py-1 font-semibold rounded transition-all flex items-center gap-1 ${
+              viewMode === 'alts'
+                ? 'bg-purple-500/20 text-purple-400 border border-purple-500/40'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <span>✦ ALTS</span>
           </button>
         </div>
 
-        {/* Quick Toolbar */}
+        {/* Action Controls */}
         <div className="flex items-center gap-1.5">
           <button
-            onClick={handleSurge}
-            className="px-2.5 py-1 rounded text-[11px] font-bold font-mono bg-neon-cyan/20 border border-neon-cyan/40 text-neon-cyan hover:bg-neon-cyan/30 transition-all flex items-center gap-1 shadow-[0_0_10px_rgba(0,240,255,0.2)]"
-            title="Evaluate fresh market candle inference"
+            onClick={onTriggerSurge}
+            className="px-2.5 py-1 rounded text-[11px] font-bold font-mono bg-neon-cyan/20 border border-neon-cyan/40 text-neon-cyan hover:bg-neon-cyan/30 transition-all flex items-center gap-1 shadow-[0_0_8px_rgba(0,240,255,0.2)]"
+            title="Refresh and evaluate market candle data"
           >
             <Zap size={11} />
             <span>EVALUATE TICK</span>
@@ -1028,21 +822,9 @@ export default function HolographicBrainViewer({
           <button
             onClick={resetCamera}
             className="p-1 rounded border border-gray-700 bg-cyber-surface/60 text-gray-400 hover:text-white"
-            title="Reset Camera"
+            title="Reset Perspective"
           >
             <RotateCcw size={12} />
-          </button>
-
-          <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`p-1 rounded border text-xs ${
-              soundEnabled
-                ? 'bg-neon-magenta/20 border-neon-magenta text-neon-magenta'
-                : 'bg-cyber-surface/60 border-gray-700 text-gray-500'
-            }`}
-            title={soundEnabled ? 'Mute' : 'Enable Neural Signal Audio'}
-          >
-            {soundEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}
           </button>
 
           <button
@@ -1055,7 +837,7 @@ export default function HolographicBrainViewer({
         </div>
       </div>
 
-      {/* Compact Canvas Area (390px) */}
+      {/* 380px Canvas Viewport */}
       <div className="relative cursor-grab active:cursor-grabbing select-none">
         <canvas
           ref={canvasRef}
@@ -1067,28 +849,72 @@ export default function HolographicBrainViewer({
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onWheel={handleWheel}
-          className="w-full h-[390px] block"
+          className="w-full h-[380px] block"
         />
 
-        {/* Real Signal Telemetry Pill (Bottom Left) */}
-        <div className="absolute bottom-3 left-3 px-3 py-1.5 rounded-lg bg-black/70 border border-white/10 backdrop-blur-md text-[10px] font-mono text-gray-300 pointer-events-none flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-neon-cyan">
-            <Activity size={11} className="animate-pulse" />
-            <span className="font-bold">INFERENCE #{jarvisData?.train_steps || inferenceCount || 1}</span>
+        {/* Live Decisions Telemetry Strip (Bottom) */}
+        <div className="absolute bottom-3 inset-x-3 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+          {/* BTC Card */}
+          <div className="px-2.5 py-1.5 rounded-lg bg-black/75 border border-amber-500/30 backdrop-blur-md text-[10px] font-mono flex items-center gap-2">
+            <span className="text-amber-400 font-bold">₿ BTC:</span>
+            <span
+              className={`font-bold ${
+                btcData?.action === 'BUY'
+                  ? 'text-neon-green'
+                  : btcData?.action === 'SELL'
+                  ? 'text-neon-pink'
+                  : 'text-gray-300'
+              }`}
+            >
+              {btcData?.action || 'HOLD'}
+            </span>
+            <span className="text-gray-400">
+              {((btcData?.confidence || 0.6) * 100).toFixed(0)}%
+            </span>
           </div>
-          <span className="text-gray-500">|</span>
-          <span>Feed: <strong className="text-white">{selectedPair}</strong></span>
-          <span className="text-gray-500">|</span>
-          <span>Decision: <strong className="text-neon-green">{jarvisData?.action || 'HOLD'}</strong></span>
-          <span className="text-gray-500">|</span>
-          <span>Confidence: <strong className="text-neon-cyan">{((jarvisData?.confidence || 0.6) * 100).toFixed(1)}%</strong></span>
-        </div>
 
-        {/* Bottom Right Legend */}
-        <div className="absolute bottom-3 right-3 hidden sm:flex items-center gap-3 px-2.5 py-1 rounded-lg bg-black/70 border border-white/10 backdrop-blur-md text-[10px] font-mono text-gray-400 pointer-events-none">
-          <span className="text-neon-cyan">● JARVIS (Cyan)</span>
-          <span className="text-orange-400">● ULTRON (Amber)</span>
-          <span className="text-gray-500">Drag to Rotate</span>
+          {/* ETH Card */}
+          <div className="px-2.5 py-1.5 rounded-lg bg-black/75 border border-cyan-500/30 backdrop-blur-md text-[10px] font-mono flex items-center gap-2">
+            <span className="text-cyan-400 font-bold">Ξ ETH:</span>
+            <span
+              className={`font-bold ${
+                ethData?.action === 'BUY'
+                  ? 'text-neon-green'
+                  : ethData?.action === 'SELL'
+                  ? 'text-neon-pink'
+                  : 'text-gray-300'
+              }`}
+            >
+              {ethData?.action || 'HOLD'}
+            </span>
+            <span className="text-gray-400">
+              {((ethData?.confidence || 0.6) * 100).toFixed(0)}%
+            </span>
+          </div>
+
+          {/* ALTS Card */}
+          <div className="px-2.5 py-1.5 rounded-lg bg-black/75 border border-purple-500/30 backdrop-blur-md text-[10px] font-mono flex items-center gap-2">
+            <span className="text-purple-400 font-bold">✦ ALTS:</span>
+            <span
+              className={`font-bold ${
+                altsData?.action === 'BUY'
+                  ? 'text-neon-green'
+                  : altsData?.action === 'SELL'
+                  ? 'text-neon-pink'
+                  : 'text-gray-300'
+              }`}
+            >
+              {altsData?.action || 'HOLD'}
+            </span>
+            <span className="text-gray-400">
+              {((altsData?.confidence || 0.6) * 100).toFixed(0)}%
+            </span>
+          </div>
+
+          {/* Tip */}
+          <div className="hidden lg:block text-[9px] font-mono text-gray-500">
+            Neurons light up on live signal evaluation • Drag to rotate
+          </div>
         </div>
       </div>
     </div>

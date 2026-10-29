@@ -177,12 +177,16 @@ export default function NeuralBrain() {
   const synapses = brain.top_synapses || [];
   const reinforcements = brain.recent_reinforcements || [];
 
-  // Dual Consciousness Feeds (Jarvis = Macro BTC/Trend, Ultron = High-Volatility Alts)
-  const jarvisData =
+  // Tri-Engine Neural Data Feeds (BTC, ETH, ALTS)
+  const btcData =
     allBrainsData['Neural_Network_BTC'] ||
     (activeModelId === 'Neural_Network_BTC' ? brainData : null) ||
     brainData;
-  const ultronData =
+  const ethData =
+    allBrainsData['Neural_Network_ETH'] ||
+    (activeModelId === 'Neural_Network_ETH' ? brainData : null) ||
+    brainData;
+  const altsData =
     allBrainsData['Neural_Network_ALTS'] ||
     (activeModelId === 'Neural_Network_ALTS' ? brainData : null) ||
     brainData;
@@ -416,10 +420,10 @@ export default function NeuralBrain() {
           <div className="flex items-center gap-2">
             <Sparkles className="text-neon-cyan animate-pulse" size={18} />
             <h2 className="text-base sm:text-lg font-bold font-heading text-white">
-              Neural Consciousness Visualization
+              Neural Engine Visualization
             </h2>
             <span className="text-[10px] px-2 py-0.5 rounded bg-black/60 border border-neon-cyan/40 text-neon-cyan font-mono font-bold">
-              AVENGERS JARVIS &amp; ULTRON
+              BTC • ETH • ALTS TRI-ENGINE
             </span>
           </div>
 
@@ -433,7 +437,7 @@ export default function NeuralBrain() {
               }`}
             >
               <Sparkles size={13} className="text-neon-cyan" />
-              <span>3D Hologram (Avengers)</span>
+              <span>3D Tri-Brains (BTC • ETH • ALTS)</span>
             </button>
             <button
               onClick={() => setDisplayMode('both')}
@@ -464,11 +468,11 @@ export default function NeuralBrain() {
         {(displayMode === 'hologram' || displayMode === 'both') && (
           <div className="space-y-4">
             <HolographicBrainViewer
-              jarvisData={jarvisData}
-              ultronData={ultronData}
+              btcData={btcData}
+              ethData={ethData}
+              altsData={altsData}
               activeModelId={activeModelId}
               selectedPair={selectedPair}
-              isSurgeFiring={isFiring}
               onTriggerSurge={handleFireSynapses}
             />
 
