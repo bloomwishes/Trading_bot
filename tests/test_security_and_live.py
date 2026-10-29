@@ -144,3 +144,74 @@ def test_host_binding_and_cors_config():
     assert settings.BACKEND_HOST in ("127.0.0.1", "localhost")
     for origin in settings.ALLOWED_ORIGINS:
         assert "*" not in origin
+
+
+def test_paper_reset_trains_nn_and_wipes_history(client, auth_headers, db_session):
+    """
+    Verify Paper Reset workflow:
+    1. Rejects reset if mode is live.
+    2. In paper mode: closes open positions, trains neural network, deletes trades, resets capital to 10000.
+    """
+    from backend.main import app
+    engine = app.state.engine
+
+    # 1. Reject if live mode
+    orig_mode = engine.mode
+    engine.mode = "live"
+    try:
+        res = client.post("/api/portfolio/reset-paper", headers=auth_headers)
+        assert res.status_code == 400
+        assert "Paper Trading mode" in res.json()["detail"]
+    finally:
+        engine.mode = "paper"
+
+    # 2. Seed an open trade and closed trades
+    open_trade = Trade(
+        pair="BTC/INR",
+        side="BUY",
+        strategy="Neural_Network_BTC",
+        entry_price=8000000.0,
+        quantity=0.001,
+        status="OPEN",
+        paper_mode=True,
+    )
+    closed_trade = Trade(
+        pair="BTC/INR",
+        side="BUY",
+        strategy="Neural_Network_BTC",
+        entry_price=8000000.0,
+        exit_price=8100000.0,
+        quantity=0.001,
+        pnl=100.0,
+        status="CLOSED",
+        paper_mode=True,
+    )
+    db_session.add(open_trade)
+    db_session.add(closed_trade)
+    db_session.commit()
+    db_session.refresh(open_trade)
+    engine.paper_trader.positions[open_trade.id] = {
+        "id": open_trade.id,
+        "pair": open_trade.pair,
+        "side": open_trade.side,
+        "entry_price": open_trade.entry_price,
+        "quantity": open_trade.quantity,
+    }
+
+    # 3. Call reset paper endpoint
+    res2 = client.post("/api/portfolio/reset-paper", headers=auth_headers)
+    assert res2.status_code == 200
+    data = res2.json()
+    assert data["status"] == "success"
+    assert data["closed_active_trades"] >= 1
+    assert data["trained_trades"] >= 2
+    assert data["current_balance"] == settings.PAPER_BALANCE
+    assert "neural_training" in data
+
+    # 4. Verify DB was wiped for paper trades
+    remaining = db_session.query(Trade).filter(Trade.paper_mode.is_(True)).count()
+    assert remaining == 0
+
+    # 5. Verify paper trader balance and positions are clean
+    assert engine.paper_trader.balance == settings.PAPER_BALANCE
+    assert len(engine.paper_trader.positions) == 0

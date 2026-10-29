@@ -409,9 +409,17 @@ class NeuralNetworkStrategy(StrategyBase):
             y_cls_list.append(np.array(trade_y_cls, dtype=np.int64))
             y_ret_list.append(np.array(trade_y_ret, dtype=np.float64))
 
-        X_full = np.vstack(X_list)
-        y_cls_full = np.concatenate(y_cls_list)
-        y_ret_full = np.concatenate(y_ret_list)
+        X_full = np.vstack(X_list) if X_list else np.empty((0, NUM_FEATURES), dtype=np.float64)
+        y_cls_full = np.concatenate(y_cls_list) if y_cls_list else np.empty(0, dtype=np.int64)
+        y_ret_full = np.concatenate(y_ret_list) if y_ret_list else np.empty(0, dtype=np.float64)
+
+        if 0 < len(X_full) < 8:
+            reps = int(np.ceil(8 / len(X_full)))
+            X_full = np.tile(X_full, (reps, 1))
+            noise = rng.normal(0, 0.01, size=X_full.shape)
+            X_full = X_full + noise
+            y_cls_full = np.tile(y_cls_full, reps)
+            y_ret_full = np.tile(y_ret_full, reps)
 
         # Fit model on historical trade dataset
         metrics = self.model.fit(X_full, y_cls_full, y_ret_full, epochs=epochs, lr=lr)

@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
-import { History, Download, Filter, Calendar, TrendingUp, TrendingDown, Award, BarChart3, ChevronDown, ChevronUp, Brain, Zap, CheckCircle2, Loader2 } from 'lucide-react';
+import { useOutletContext } from 'react-router-dom';
+import { History, Download, Filter, Calendar, TrendingUp, TrendingDown, Award, BarChart3, ChevronDown, ChevronUp, Brain, Zap, CheckCircle2, Loader2, RotateCcw } from 'lucide-react';
 import { getTradeHistory, exportTrades, trainNeuralNetworkOnHistory } from '../utils/api';
+import ResetPaperModal from '../components/ResetPaperModal';
 import { formatINR, formatPercent, formatDate, parseDate } from '../utils/formatters';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
@@ -19,6 +21,12 @@ export default function TradeHistory() {
   });
   const [pageSize, setPageSize] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+
+  const outletContext = useOutletContext();
+  const currentMode = outletContext?.status?.mode || 'paper';
+  const refetchStatus = outletContext?.refetchStatus;
+  const refetchPortfolio = outletContext?.refetchPortfolio;
 
   useEffect(() => {
     fetchHistory();
@@ -163,6 +171,18 @@ export default function TradeHistory() {
           <p className="text-gray-400 mt-1">Review past trades and performance metrics</p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
+          {currentMode === 'paper' && (
+            <button
+              onClick={() => setShowResetModal(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-neon-purple/15 border border-neon-purple/50 
+                         text-neon-purple hover:bg-neon-purple/25 transition-all duration-300
+                         hover:shadow-[0_0_15px_rgba(180,0,255,0.3)] font-medium text-sm"
+              title="Reset Paper Account: Train AI on history, close open trades, purge history, and reset capital"
+            >
+              <RotateCcw size={16} />
+              <span>Reset Paper &amp; Train</span>
+            </button>
+          )}
           <button
             onClick={handleTrainNeuralNetwork}
             disabled={trainingNN || trades.length === 0}
@@ -648,6 +668,16 @@ export default function TradeHistory() {
           </>
         )}
       </div>
+
+      <ResetPaperModal
+        isOpen={showResetModal}
+        onClose={() => setShowResetModal(false)}
+        onSuccess={() => {
+          fetchHistory();
+          refetchStatus?.();
+          refetchPortfolio?.();
+        }}
+      />
     </div>
   );
 }

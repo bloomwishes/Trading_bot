@@ -20,9 +20,9 @@ import pandas as pd
 
 from backend.config import settings
 from backend.database import SessionLocal
-from backend.models import Trade, Signal
+from backend.models import Trade, Signal, PortfolioSnapshot
 from backend.utils.logger import bot_logger
-from backend.utils.helpers import timestamp_now, calculate_pnl, calculate_pnl_pct
+from backend.utils.helpers import timestamp_now, calculate_pnl, calculate_pnl_pct, format_inr
 
 from backend.exchange.exchange_manager import ExchangeManager
 from backend.risk.risk_manager import RiskManager
@@ -1096,6 +1096,118 @@ class TradingEngine:
                 strategy.disable()
                 bot_logger.info(f"[Engine] Strategy {name} DISABLED")
                 return
+
+    def reset_paper_account(self, new_balance: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Paper Trading Reset Workflow:
+        1. Verifies engine is in paper trading mode.
+        2. Closes all active open positions at current market prices.
+        3. Trains all Neural Network strategies on historical & closed trades.
+        4. Deletes paper trades and portfolio snapshots from database.
+        5. Resets cash balance to initial capital (settings.PAPER_BALANCE or new_balance).
+        6. Clears position trackers and resets portfolio risk monitors.
+        """
+        if self.mode != "paper":
+            raise ValueError("Reset operation is strictly forbidden in live trading mode.")
+
+        db = SessionLocal()
+        try:
+            # 1. Close all active open positions
+            open_trades = db.query(Trade).filter(Trade.status == "OPEN", Trade.paper_mode.is_(True)).all()
+            closed_trades_count = 0
+            for trade in open_trades:
+                cur_price = float(trade.entry_price or 1.0)
+                if hasattr(self, "exchange_manager"):
+                    try:
+                        ticker = self.exchange_manager.get_ticker(trade.pair)
+                        cur_price = float(ticker.get("last_price", cur_price)) if isinstance(ticker, dict) else float(ticker)
+                    except Exception:
+                        pass
+                if hasattr(self, "paper_trader"):
+                    self.paper_trader.close_trade(trade.id, cur_price, exit_reason="PAPER_RESET")
+                closed_trades_count += 1
+
+            # Commit closed trades
+            db.commit()
+
+            # 2. Train neural networks on all closed trades
+            all_closed_trades = db.query(Trade).filter(Trade.status == "CLOSED", Trade.paper_mode.is_(True)).all()
+            total_history_trades = len(all_closed_trades)
+            training_results = {}
+            neural_strategies = [s for s in self.strategies if s.name.startswith("Neural_Network")]
+            for strat in neural_strategies:
+                try:
+                    res = strat.train_on_closed_trades(
+                        db=db,
+                        exchange_manager=getattr(self, "exchange_manager", None),
+                        epochs=25,
+                    )
+                    training_results[strat.name] = res
+                except Exception as err:
+                    training_results[strat.name] = {"status": "error", "error": str(err)}
+
+            # 3. Purge paper trades and snapshots from database
+            deleted_trades = db.query(Trade).filter(Trade.paper_mode.is_(True)).delete()
+            deleted_snaps = db.query(PortfolioSnapshot).filter(PortfolioSnapshot.paper_mode.is_(True)).delete()
+            db.commit()
+
+            # 4. Reset paper trader balance and clear in-memory positions
+            initial_cap = float(new_balance or settings.PAPER_BALANCE)
+            if hasattr(self, "paper_trader"):
+                self.paper_trader.initial_balance = initial_cap
+                self.paper_trader.balance = initial_cap
+                self.paper_trader.positions.clear()
+
+            # 5. Clear unified position tracker
+            if hasattr(self, "position_tracker"):
+                self.position_tracker.positions.clear()
+
+            # 6. Reset portfolio risk monitor & cooldowns
+            if hasattr(self, "risk_manager") and hasattr(self.risk_manager, "portfolio_monitor"):
+                pm = self.risk_manager.portfolio_monitor
+                pm.high_water_mark = initial_cap
+                pm.current_drawdown_pct = 0.0
+                pm.consecutive_losses = 0
+                pm.consecutive_wins = 0
+                pm.cooldown_until = None
+                pm.trading_enabled = True
+
+            # 7. Add fresh initial portfolio snapshot
+            initial_snap = PortfolioSnapshot(
+                total_value=initial_cap,
+                cash=initial_cap,
+                positions_json="[]",
+                paper_mode=True,
+                created_at=datetime.utcnow(),
+            )
+            db.add(initial_snap)
+            db.commit()
+
+            bot_logger.info(
+                f"[Engine] Paper account reset complete: Closed {closed_trades_count} active trades, "
+                f"trained NN on {total_history_trades} trades, purged {deleted_trades} DB records, "
+                f"restored initial balance to {format_inr(initial_cap)}."
+            )
+
+            return {
+                "status": "success",
+                "message": (
+                    f"Paper trading reset successfully. Trained neural networks on {total_history_trades} trades, "
+                    f"closed {closed_trades_count} active positions, and restored capital to {format_inr(initial_cap)}."
+                ),
+                "closed_active_trades": closed_trades_count,
+                "trained_trades": total_history_trades,
+                "purged_records": deleted_trades,
+                "neural_training": training_results,
+                "initial_balance": initial_cap,
+                "current_balance": initial_cap,
+            }
+        except Exception as exc:
+            db.rollback()
+            bot_logger.error(f"[Engine] Paper account reset failed: {exc}")
+            raise
+        finally:
+            db.close()
 
     # ------------------------------------------------------------------
     # Status / info

@@ -258,17 +258,32 @@ async def get_equity_curve(
 # POST /api/portfolio/reset-paper
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@router.post("/reset-paper", summary="Reset paper trading account balance and trades", dependencies=[Depends(require_api_key)])
+@router.post("/reset-paper", summary="Reset paper trading account, train neural network, and restore initial capital", dependencies=[Depends(require_api_key)])
 async def reset_paper_account(
     request: Request,
     initial_balance: Optional[float] = None,
 ) -> dict[str, Any]:
     """
-    Reset paper trading account: clears all paper trades and resets cash to initial balance.
+    Paper Trading Reset Workflow:
+    1. Validates paper mode (strictly rejected in live mode).
+    2. Closes all active open positions at current market prices.
+    3. Trains neural networks on complete trade history.
+    4. Purges all paper trades & snapshots from SQLite.
+    5. Restores portfolio capital to initial settings (₹10,000).
     """
     engine = getattr(request.app.state, "engine", None)
-    if not engine or not hasattr(engine, "paper_trader"):
-        raise HTTPException(status_code=400, detail="Paper trading engine not active")
-    res = engine.paper_trader.reset_paper_account(new_balance=initial_balance)
-    return res
+    if not engine:
+        raise HTTPException(status_code=500, detail="Trading engine not active")
+
+    if engine.mode != "paper":
+        raise HTTPException(
+            status_code=400,
+            detail="Reset is ONLY allowed in Paper Trading mode. Live trading accounts cannot be reset.",
+        )
+
+    try:
+        res = engine.reset_paper_account(new_balance=initial_balance)
+        return res
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to reset paper account: {exc}") from exc
 

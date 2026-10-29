@@ -3,9 +3,10 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import StatusBadge from './StatusBadge';
 import PaperLiveToggle from './PaperLiveToggle';
+import ResetPaperModal from './ResetPaperModal';
 import AnimatedNumber from './AnimatedNumber';
 import { getStatus, setMode, getPortfolioCurrent } from '../utils/api';
-import { Wifi, WifiOff, RefreshCw, Menu, X, QrCode } from 'lucide-react';
+import { Wifi, WifiOff, RefreshCw, Menu, X, QrCode, RotateCcw } from 'lucide-react';
 import MobileQRCodeModal from './MobileQRCodeModal';
 
 export default function Layout() {
@@ -16,6 +17,7 @@ export default function Layout() {
   const [refreshing, setRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [resetModalOpen, setResetModalOpen] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -103,6 +105,16 @@ export default function Layout() {
               mode={currentMode}
               onToggle={handleModeToggle}
             />
+            {currentMode === 'paper' && (
+              <button
+                onClick={() => setResetModalOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-neon-purple/15 hover:bg-neon-purple/25 border border-neon-purple/40 text-neon-purple text-xs font-heading font-semibold transition-all hover:shadow-[0_0_15px_rgba(180,0,255,0.3)] hover:-translate-y-0.5"
+                title="Reset Paper Account: Train AI on trade history, close active trades, clear history, and reset capital"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Reset Paper</span>
+              </button>
+            )}
           </div>
 
           {/* Right section */}
@@ -171,6 +183,13 @@ export default function Layout() {
           isOpen={qrModalOpen}
           onClose={() => setQrModalOpen(false)}
           tunnelData={status?.tunnel}
+        />
+
+        {/* Paper Account Reset & Neural Training Modal */}
+        <ResetPaperModal
+          isOpen={resetModalOpen}
+          onClose={() => setResetModalOpen(false)}
+          onSuccess={handleRefresh}
         />
       </div>
     </div>

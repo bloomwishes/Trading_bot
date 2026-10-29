@@ -75,6 +75,7 @@ export const updateRiskSettings = (settings) => api.put('/risk', settings);
 // ==========================================
 export const getPortfolioSnapshots = () => api.get('/portfolio/snapshots');
 export const getPortfolioCurrent = () => api.get('/portfolio/current');
+export const resetPaperAccount = () => api.post('/portfolio/reset-paper');
 
 // ==========================================
 // LLM DECISIONS & AI Agent
