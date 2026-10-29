@@ -293,6 +293,7 @@ class DeepTradingNN:
         self.is_trained: bool = False
         self.train_steps: int = 0
         self.last_loss: float = 0.0
+        self._inference_seq: int = 0
 
         # Adam state
         self._adam_m: Dict[str, np.ndarray] = {}
@@ -428,18 +429,40 @@ class DeepTradingNN:
         a1_norm = [round(float(max(0.0, val / a1_max)), 4) for val in a1]
         a2_norm = [round(float(max(0.0, val / a2_max)), 4) for val in a2]
 
-        # Extract top 15 firing synapses between L1 and L2 for animated visual pulse lines
-        synapses = []
+        self._inference_seq += 1
+
+        # Real Firing Synapses along actual mathematical forward propagation paths
+        synapses_in_to_l1 = []
+        synapses_l1_to_l2 = []
+        synapses_l2_to_out = []
         try:
-            # Active weights: a1 * W2 * a2
-            weight_flow = np.abs(a1[:, None] * self.W2 * a2[None, :])
-            flat_indices = np.argsort(weight_flow.ravel())[-15:]
-            for idx in flat_indices:
-                src, dst = np.unravel_index(idx, weight_flow.shape)
-                strength = float(weight_flow[src, dst])
-                synapses.append({"from": int(src), "to": int(dst), "strength": round(strength, 3)})
+            # 1. Inputs -> Layer 1 flow: |x_norm * W1 * a1|
+            in_flow = np.abs(x_norm[:, None] * self.W1 * a1[None, :])
+            in_flat = np.argsort(in_flow.ravel())[-24:]
+            for idx in in_flat:
+                src, dst = np.unravel_index(idx, in_flow.shape)
+                strength = float(in_flow[src, dst])
+                if strength > 0.001:
+                    synapses_in_to_l1.append({"from": int(src), "to": int(dst), "strength": round(strength, 3)})
+
+            # 2. Layer 1 -> Layer 2 flow: |a1 * W2 * a2|
+            l1_flow = np.abs(a1[:, None] * self.W2 * a2[None, :])
+            l1_flat = np.argsort(l1_flow.ravel())[-28:]
+            for idx in l1_flat:
+                src, dst = np.unravel_index(idx, l1_flow.shape)
+                strength = float(l1_flow[src, dst])
+                if strength > 0.001:
+                    synapses_l1_to_l2.append({"from": int(src), "to": int(dst), "strength": round(strength, 3)})
+
+            # 3. Layer 2 -> Output Decision: |a2 * W_cls[:, cls_idx]|
+            l2_flow = np.abs(a2 * self.W_cls[:, cls_idx])
+            top_out_idx = np.argsort(l2_flow)[-12:]
+            for src in top_out_idx:
+                strength = float(l2_flow[src])
+                if strength > 0.001:
+                    synapses_l2_to_out.append({"from": int(src), "to": int(cls_idx), "strength": round(strength, 3)})
         except Exception:
-            synapses = []
+            pass
 
         return {
             "action": label,
@@ -460,7 +483,11 @@ class DeepTradingNN:
             ],
             "layer1_activations": a1_norm,
             "layer2_activations": a2_norm,
-            "top_synapses": synapses,
+            "top_synapses": synapses_l1_to_l2,
+            "synapses_in_to_l1": synapses_in_to_l1,
+            "synapses_l1_to_l2": synapses_l1_to_l2,
+            "synapses_l2_to_out": synapses_l2_to_out,
+            "inference_seq": self._inference_seq,
         }
 
     def reinforce_trade_outcome(
