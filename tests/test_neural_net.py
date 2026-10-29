@@ -13,6 +13,7 @@ Comprehensive test suite verifying:
 
 import json
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
 import unittest
@@ -240,6 +241,25 @@ class TestNeuralNetworkActiveAndBrain(unittest.TestCase):
 
         db = SessionLocal()
         try:
+            # Seed closed trades in test DB if empty (need at least 8 for fit())
+            if db.query(Trade).filter(Trade.status == "CLOSED").count() < 8:
+                for i in range(12):
+                    t = Trade(
+                        pair="BTC/INR",
+                        strategy="Neural_Network_BTC",
+                        side="BUY",
+                        entry_price=8000000.0,
+                        exit_price=8100000.0 if i % 2 == 0 else 7900000.0,
+                        quantity=0.001,
+                        pnl=100.0 if i % 2 == 0 else -100.0,
+                        status="CLOSED",
+                        paper_mode=True,
+                        created_at=datetime.utcnow() - timedelta(hours=i + 1),
+                        closed_at=datetime.utcnow() - timedelta(hours=i),
+                    )
+                    db.add(t)
+                db.commit()
+
             strategy = NeuralNetworkStrategy()
             initial_steps = strategy.model.train_steps
             train_res = strategy.train_on_closed_trades(db, epochs=5)

@@ -26,12 +26,15 @@ class PaperTrader:
     """
 
     def __init__(self, initial_balance: Optional[float] = None) -> None:
-        self.balance: float = initial_balance or settings.PAPER_BALANCE
+        self.initial_balance: float = float(initial_balance or settings.PAPER_BALANCE)
+        self.balance: float = self.initial_balance
         # positions: {trade_id: position_dict}
         self.positions: Dict[int, Dict[str, Any]] = {}
 
         # Restore any trades that were still OPEN from a previous run
         self._restore_open_positions()
+        # Synchronize cash balance with closed trade PnL and active position cost
+        self._sync_balance_from_db()
 
     # ── Restore on startup ─────────────────────────────────────────────
     def _restore_open_positions(self) -> None:
@@ -62,6 +65,60 @@ class PaperTrader:
                 )
         except Exception as exc:
             bot_logger.error(f"PaperTrader restore error: {exc}")
+        finally:
+            session.close()
+
+    def _sync_balance_from_db(self) -> None:
+        """
+        Synchronize in-memory cash balance with the database.
+        Formula:
+          Cash Balance = Initial Balance + Realized PnL (Closed Paper Trades) - Deployed Cost (Open Paper Trades)
+        """
+        session = SessionLocal()
+        try:
+            closed_trades = (
+                session.query(Trade)
+                .filter(Trade.status == "CLOSED", Trade.paper_mode.is_(True))
+                .all()
+            )
+            realized_pnl = sum(float(t.pnl or 0.0) for t in closed_trades)
+
+            # Deduct entry cost for open BUY positions
+            open_cost = sum(
+                float(pos.get("entry_price", 0.0)) * float(pos.get("quantity", 0.0))
+                for pos in self.positions.values()
+                if pos.get("side", "BUY") == "BUY"
+            )
+
+            self.balance = round(self.initial_balance + realized_pnl - open_cost, 2)
+            bot_logger.info(
+                f"PaperTrader balance synced: Initial={format_inr(self.initial_balance)}, "
+                f"Realized PnL={format_inr(realized_pnl)}, "
+                f"Open Cost={format_inr(open_cost)} -> Available Cash={format_inr(self.balance)}"
+            )
+        except Exception as exc:
+            bot_logger.error(f"PaperTrader sync balance error: {exc}")
+        finally:
+            session.close()
+
+    def reset_paper_account(self, new_balance: Optional[float] = None) -> Dict[str, Any]:
+        """Reset paper account: delete all paper trades and restore initial cash balance."""
+        self.initial_balance = float(new_balance or settings.PAPER_BALANCE)
+        self.balance = self.initial_balance
+        self.positions.clear()
+
+        session = SessionLocal()
+        try:
+            deleted = session.query(Trade).filter(Trade.paper_mode.is_(True)).delete()
+            session.commit()
+            bot_logger.info(
+                f"Paper account reset: cleared {deleted} paper trades, balance reset to {format_inr(self.balance)}"
+            )
+            return {"status": "success", "cleared_trades": deleted, "balance": self.balance}
+        except Exception as exc:
+            session.rollback()
+            bot_logger.error(f"Paper account reset error: {exc}")
+            return {"status": "error", "error": str(exc)}
         finally:
             session.close()
 

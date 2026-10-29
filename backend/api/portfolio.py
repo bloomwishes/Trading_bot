@@ -18,6 +18,8 @@ from backend.database import get_db
 from backend.models import Trade, PortfolioSnapshot
 from backend.schemas import PortfolioSnapshotResponse
 from backend.monitoring.performance_analytics import PerformanceAnalytics
+from backend.utils.auth import require_api_key
+from backend.config import settings
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
 
@@ -197,9 +199,9 @@ async def get_equity_curve(
     snapshots.reverse()
 
     engine = getattr(request.app.state, "engine", None)
-    initial_capital = 100000.0
+    initial_capital = float(getattr(settings, "PAPER_BALANCE", 10000.0))
     if engine and hasattr(engine, "paper_trader"):
-        initial_capital = float(getattr(engine.paper_trader, "initial_balance", 100000.0))
+        initial_capital = float(getattr(engine.paper_trader, "initial_balance", initial_capital))
 
     curve_points = []
     peak = initial_capital
@@ -250,4 +252,23 @@ async def get_equity_curve(
         "total_points": len(curve_points),
         "points": curve_points,
     }
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# POST /api/portfolio/reset-paper
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@router.post("/reset-paper", summary="Reset paper trading account balance and trades", dependencies=[Depends(require_api_key)])
+async def reset_paper_account(
+    request: Request,
+    initial_balance: Optional[float] = None,
+) -> dict[str, Any]:
+    """
+    Reset paper trading account: clears all paper trades and resets cash to initial balance.
+    """
+    engine = getattr(request.app.state, "engine", None)
+    if not engine or not hasattr(engine, "paper_trader"):
+        raise HTTPException(status_code=400, detail="Paper trading engine not active")
+    res = engine.paper_trader.reset_paper_account(new_balance=initial_balance)
+    return res
 

@@ -59,18 +59,33 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
     scheduler = request.app.state.scheduler
     start_time: float = getattr(request.app.state, "start_time", time.time())
 
-    # ── Portfolio value ──────────────────────────────────────────────────
+    # ── Portfolio value & Mark-to-Market PnL ─────────────────────────────
     total_value: float = 0.0
     cash_balance: float = 0.0
+    positions_value: float = 0.0
+    unrealized_pnl: float = 0.0
     try:
         if engine.mode == "paper":
             paper = engine.paper_trader
             cash_balance = float(getattr(paper, "balance", 0))
-            total_value = cash_balance
-            # Add value of open positions
             if hasattr(paper, "positions"):
                 for pos in paper.positions.values():
-                    total_value += pos.get("entry_price", 0) * pos.get("quantity", 0)
+                    pair = pos.get("pair")
+                    entry_p = float(pos.get("entry_price", 0))
+                    qty = float(pos.get("quantity", 0))
+                    cur_p = entry_p
+                    if hasattr(engine, "exchange_manager"):
+                        try:
+                            ticker = engine.exchange_manager.get_ticker(pair)
+                            cur_p = float(ticker.get("last_price", entry_p)) if isinstance(ticker, dict) else float(ticker)
+                        except Exception:
+                            cur_p = entry_p
+                    side = str(pos.get("side", "BUY")).upper()
+                    pos_val = cur_p * qty
+                    positions_value += pos_val
+                    mult = 1.0 if side == "BUY" else -1.0
+                    unrealized_pnl += (cur_p - entry_p) * qty * mult
+            total_value = cash_balance + positions_value
         else:
             exchange = engine.exchange_manager
             balance = exchange.fetch_balance() if hasattr(exchange, "fetch_balance") else {}
@@ -82,8 +97,25 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
     # ── Active trades ────────────────────────────────────────────────────
     open_trades = db.query(Trade).filter(Trade.status == "OPEN").count()
 
-    # ── Win rate ─────────────────────────────────────────────────────────
+    # ── Win rate & PnL ───────────────────────────────────────────────────
     win_rate = _calc_win_rate(db)
+
+    # Today's realized and total PnL
+    from datetime import datetime, timezone
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_closed = (
+        db.query(Trade)
+        .filter(Trade.status == "CLOSED", Trade.closed_at >= today_start)
+        .all()
+    )
+    today_realized_pnl = sum(float(t.pnl or 0.0) for t in today_closed)
+    today_pnl = round(today_realized_pnl + unrealized_pnl, 2)
+    today_base = max(total_value - today_pnl, 1.0)
+    today_pnl_pct = round((today_pnl / today_base) * 100.0, 2)
+
+    all_closed = db.query(Trade).filter(Trade.status == "CLOSED").all()
+    total_realized_pnl = sum(float(t.pnl or 0.0) for t in all_closed)
+    total_pnl = round(total_realized_pnl + unrealized_pnl, 2)
 
     # ── Uptime ───────────────────────────────────────────────────────────
     uptime_secs = time.time() - start_time
@@ -94,7 +126,7 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
     # ── Health, Analytics & Alerts Summaries (Agent 5) ───────────────────
     health_stat = health_monitor.get_health_status()
 
-    closed_trades = db.query(Trade).filter(Trade.status == "CLOSED").all()
+    closed_trades = all_closed
     analytics = PerformanceAnalytics.calculate_full_report(closed_trades, period="all")
 
     active_alerts = alert_manager.get_recent_alerts(limit=5)
@@ -115,8 +147,13 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
         "portfolio": {
             "total_value_inr": round(total_value, 2),
             "cash_balance_inr": round(cash_balance, 2),
+            "positions_value_inr": round(positions_value, 2),
             "active_trades": open_trades,
             "win_rate_pct": win_rate,
+            "today_pnl": today_pnl,
+            "today_pnl_pct": today_pnl_pct,
+            "total_pnl": total_pnl,
+            "unrealized_pnl": round(unrealized_pnl, 2),
         },
         "health_summary": {
             "status": health_stat.get("overall_status", "healthy"),
