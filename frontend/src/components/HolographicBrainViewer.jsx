@@ -1,8 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
-  RotateCcw,
-  Play,
-  Pause,
   Maximize2,
   Minimize2,
   Activity,
@@ -102,22 +99,14 @@ export default function HolographicBrainViewer({
 
   // View state: 'all' (all 3 side-by-side) | 'btc' | 'eth' | 'alts'
   const [viewMode, setViewMode] = useState('all');
-  const [autoRotate, setAutoRotate] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hoveredNode, setHoveredNode] = useState(null);
 
-  // 3D Camera
+  // Fixed 3D Perspective (Revolving & Zooming completely removed)
   const cameraRef = useRef({
-    rotX: 8 * DEG2RAD,
-    rotY: -10 * DEG2RAD,
-    targetRotX: 8 * DEG2RAD,
-    targetRotY: -10 * DEG2RAD,
+    rotX: 0,
+    rotY: 0,
     zoom: 1.0,
-    targetZoom: 1.0,
-    isDragging: false,
-    lastMouseX: 0,
-    lastMouseY: 0,
-    autoRotSpeed: 0.002,
   });
 
   // Scene state storing nodes and axons for all 3 brains
@@ -323,36 +312,17 @@ export default function HolographicBrainViewer({
     });
   }, [btcData, ethData, altsData, initSceneGraph]);
 
-  // Mouse & Touch Controls
-  const handleMouseDown = (e) => {
-    const cam = cameraRef.current;
-    cam.isDragging = true;
-    cam.lastMouseX = e.clientX;
-    cam.lastMouseY = e.clientY;
-  };
-
+  // Pure Hover Proximity Inspection (No dragging, no camera rotation)
   const handleMouseMove = (e) => {
-    const cam = cameraRef.current;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    if (cam.isDragging) {
-      const dx = e.clientX - cam.lastMouseX;
-      const dy = e.clientY - cam.lastMouseY;
-      cam.targetRotY += dx * 0.007;
-      cam.targetRotX += dy * 0.007;
-      cam.targetRotX = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cam.targetRotX));
-      cam.lastMouseX = e.clientX;
-      cam.lastMouseY = e.clientY;
-    }
-
-    // Proximity raycast for node hover
     const rect = canvas.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
     let closest = null;
-    let minDist = 15;
+    let minDist = 16;
 
     const scene = sceneRef.current;
     Object.values(scene.brains).forEach((b) => {
@@ -370,47 +340,8 @@ export default function HolographicBrainViewer({
     setHoveredNode(closest);
   };
 
-  const handleMouseUp = () => {
-    cameraRef.current.isDragging = false;
-  };
-
-  const handleTouchStart = (e) => {
-    if (e.touches.length === 1) {
-      const cam = cameraRef.current;
-      cam.isDragging = true;
-      cam.lastMouseX = e.touches[0].clientX;
-      cam.lastMouseY = e.touches[0].clientY;
-    }
-  };
-
-  const handleTouchMove = (e) => {
-    if (e.touches.length === 1 && cameraRef.current.isDragging) {
-      const dx = e.touches[0].clientX - cameraRef.current.lastMouseX;
-      const dy = e.touches[0].clientY - cameraRef.current.lastMouseY;
-      cameraRef.current.targetRotY += dx * 0.007;
-      cameraRef.current.targetRotX += dy * 0.007;
-      cameraRef.current.targetRotX = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraRef.current.targetRotX));
-      cameraRef.current.lastMouseX = e.touches[0].clientX;
-      cameraRef.current.lastMouseY = e.touches[0].clientY;
-    }
-  };
-
-  const handleTouchEnd = () => {
-    cameraRef.current.isDragging = false;
-  };
-
-  const handleWheel = (e) => {
-    e.preventDefault();
-    const cam = cameraRef.current;
-    const delta = e.deltaY < 0 ? 0.08 : -0.08;
-    cam.targetZoom = Math.max(0.7, Math.min(1.85, cam.targetZoom + delta));
-  };
-
-  const resetCamera = () => {
-    const cam = cameraRef.current;
-    cam.targetRotX = 8 * DEG2RAD;
-    cam.targetRotY = -10 * DEG2RAD;
-    cam.targetZoom = 1.0;
+  const handleMouseLeave = () => {
+    setHoveredNode(null);
   };
 
   // Main 60 FPS Render Loop
@@ -448,14 +379,10 @@ export default function HolographicBrainViewer({
       const centerX = screenW / 2;
       const centerY = screenH / 2;
 
-      // Smooth Camera Interpolation
-      cam.rotX += (cam.targetRotX - cam.rotX) * 0.12;
-      cam.rotY += (cam.targetRotY - cam.rotY) * 0.12;
-      cam.zoom += (cam.targetZoom - cam.zoom) * 0.12;
-
-      if (autoRotate && !cam.isDragging) {
-        cam.targetRotY += cam.autoRotSpeed;
-      }
+      // Fixed Camera: Permanently stationary front view (no revolving or zooming)
+      cam.rotX = 0;
+      cam.rotY = 0;
+      cam.zoom = 1.0;
 
       // Background Clear (Cyber Tech Space)
       ctx.fillStyle = '#060810';
@@ -726,7 +653,7 @@ export default function HolographicBrainViewer({
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [viewMode, autoRotate, isFullscreen, hoveredNode, initSceneGraph]);
+  }, [viewMode, isFullscreen, hoveredNode, initSceneGraph]);
 
   return (
     <div
@@ -808,26 +735,6 @@ export default function HolographicBrainViewer({
           </button>
 
           <button
-            onClick={() => setAutoRotate(!autoRotate)}
-            className={`p-1 rounded border text-xs ${
-              autoRotate
-                ? 'bg-cyber-surface border-neon-cyan/40 text-neon-cyan'
-                : 'bg-cyber-surface/60 border-gray-700 text-gray-400'
-            }`}
-            title={autoRotate ? 'Pause 3D Rotation' : 'Resume 3D Rotation'}
-          >
-            {autoRotate ? <Pause size={12} /> : <Play size={12} />}
-          </button>
-
-          <button
-            onClick={resetCamera}
-            className="p-1 rounded border border-gray-700 bg-cyber-surface/60 text-gray-400 hover:text-white"
-            title="Reset Perspective"
-          >
-            <RotateCcw size={12} />
-          </button>
-
-          <button
             onClick={() => setIsFullscreen(!isFullscreen)}
             className="p-1 rounded border border-gray-700 bg-cyber-surface/60 text-gray-400 hover:text-white"
             title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
@@ -837,19 +744,13 @@ export default function HolographicBrainViewer({
         </div>
       </div>
 
-      {/* 380px Canvas Viewport */}
-      <div className="relative cursor-grab active:cursor-grabbing select-none">
+      {/* 380px Fixed Canvas Viewport (No revolving or zooming) */}
+      <div className="relative select-none">
         <canvas
           ref={canvasRef}
-          onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          onWheel={handleWheel}
-          className="w-full h-[380px] block"
+          onMouseLeave={handleMouseLeave}
+          className="w-full h-[380px] block cursor-default"
         />
 
         {/* Live Decisions Telemetry Strip (Bottom) */}
@@ -913,7 +814,7 @@ export default function HolographicBrainViewer({
 
           {/* Tip */}
           <div className="hidden lg:block text-[9px] font-mono text-gray-500">
-            Neurons light up on live signal evaluation • Drag to rotate
+            Neurons light up on live signal evaluation • Fixed Neural Engine
           </div>
         </div>
       </div>
