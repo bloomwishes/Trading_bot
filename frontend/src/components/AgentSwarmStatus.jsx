@@ -163,36 +163,6 @@ export default function AgentSwarmStatus({ onNavigateToAgents }) {
         )}
       </div>
 
-      {/* Autonomous Prime Directive / Zero-Ruin Mandate Banner */}
-      <div className="mb-4 p-3.5 rounded-xl bg-gradient-to-r from-neon-cyan/10 via-neon-magenta/10 to-neon-yellow/10 border border-neon-cyan/30 shadow-[0_0_20px_rgba(0,240,255,0.08)]">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-          <div className="flex items-start sm:items-center gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-neon-cyan/20 border border-neon-cyan/40 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
-              <ShieldAlert className="w-4 h-4 text-neon-cyan" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-neon-cyan">
-                  Swarm Prime Directive // Autonomous A-to-Z Agency
-                </span>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neon-magenta/20 text-neon-magenta border border-neon-magenta/40 font-semibold">
-                  ZERO-RUIN MANDATE
-                </span>
-              </div>
-              <p className="text-xs text-gray-200 mt-0.5 font-medium leading-relaxed">
-                All 5 agents operate end-to-end autonomously from A to Z. <span className="text-neon-yellow font-semibold">If trading capital is lost, the bot is dead.</span> Every agent is strictly mandated to preserve capital, maintain positive expectancy, and keep the bot running safely.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-            <span className="text-[10px] font-mono text-gray-400">Survival Gate:</span>
-            <span className="text-[11px] font-mono font-bold text-neon-green bg-black/40 px-2.5 py-0.5 rounded border border-neon-green/30">
-              ≥ ₹500 INR
-            </span>
-          </div>
-        </div>
-      </div>
-
       {/* Agents Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3.5">
         {agents.map((agent) => {

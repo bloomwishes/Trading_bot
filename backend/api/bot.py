@@ -8,6 +8,7 @@ POST /api/bot/mode    →  toggle paper / live mode (requires auth & live creden
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -117,15 +118,20 @@ async def change_mode(body: ModeChangeRequest, request: Request) -> dict[str, An
     if body.mode == "live":
         import dotenv
         from pathlib import Path
-        env_path = getattr(settings, "ENV_PATH", Path(__file__).resolve().parent.parent.parent / ".env")
-        env_vals = dotenv.dotenv_values(env_path) if Path(env_path).exists() else {}
 
-        key = (env_vals.get("COINDCX_API_KEY") or getattr(settings, "COINDCX_API_KEY", "") or os.getenv("COINDCX_API_KEY", "")).strip()
-        secret = (env_vals.get("COINDCX_API_SECRET") or getattr(settings, "COINDCX_API_SECRET", "") or os.getenv("COINDCX_API_SECRET", "")).strip()
+        key = (getattr(settings, "COINDCX_API_KEY", "") or "").strip()
+        secret = (getattr(settings, "COINDCX_API_SECRET", "") or "").strip()
 
-        # Update in-memory settings
-        settings.COINDCX_API_KEY = key
-        settings.COINDCX_API_SECRET = secret
+        # If not set in settings, reload from .env (unless running in test suite)
+        if (not key or not secret) and not os.getenv("PYTEST_CURRENT_TEST"):
+            env_path = getattr(settings, "ENV_PATH", Path(__file__).resolve().parent.parent.parent / ".env")
+            env_vals = dotenv.dotenv_values(env_path) if Path(env_path).exists() else {}
+            if not key:
+                key = (env_vals.get("COINDCX_API_KEY") or os.getenv("COINDCX_API_KEY", "")).strip()
+                settings.COINDCX_API_KEY = key
+            if not secret:
+                secret = (env_vals.get("COINDCX_API_SECRET") or os.getenv("COINDCX_API_SECRET", "")).strip()
+                settings.COINDCX_API_SECRET = secret
 
         if not key or not secret or "your_coindcx_api_key" in key or "your_api_key_here" in key:
             raise HTTPException(

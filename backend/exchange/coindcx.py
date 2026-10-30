@@ -12,8 +12,16 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import socket
 import pandas as pd
 import requests
+from urllib3.util import connection as urllib3_conn
+
+# Force IPv4 socket resolution so API requests always route via the user's whitelisted IPv4 address
+try:
+    urllib3_conn.allowed_gai_family = lambda: socket.AF_INET
+except Exception:
+    pass
 
 from backend.utils.logger import bot_logger
 

@@ -170,40 +170,6 @@ export default function AgentHub() {
         </div>
       )}
 
-      {/* Swarm Prime Directive // Autonomous Survival Mandate */}
-      <div className="p-4 rounded-xl bg-gradient-to-r from-neon-cyan/10 via-neon-magenta/10 to-neon-yellow/10 border border-neon-cyan/30 shadow-[0_0_25px_rgba(0,240,255,0.1)]">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-start sm:items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-neon-cyan/20 border border-neon-cyan/40 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
-              <ShieldAlert className="w-5 h-5 text-neon-cyan" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-mono font-bold uppercase tracking-wider text-neon-cyan">
-                  Swarm Prime Directive // Autonomous A-to-Z Agency
-                </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-magenta/20 text-neon-magenta border border-neon-magenta/40 font-semibold">
-                  ZERO-RUIN MANDATE
-                </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-green/20 text-neon-green border border-neon-green/40 font-semibold">
-                  SURVIVAL GATE ≥ ₹500
-                </span>
-              </div>
-              <p className="text-xs text-gray-200 mt-1 font-medium leading-relaxed">
-                All 5 agents are engineered to operate end-to-end autonomously from A to Z. <span className="text-neon-yellow font-bold">If trading capital is lost, the bot is dead.</span> Every agent has an existential mandate: preserve capital, execute with positive expectancy, and never take catastrophic risks.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-            <span className="text-[11px] font-mono text-gray-400">Survival Status:</span>
-            <span className="text-xs font-mono font-bold text-neon-green bg-black/50 px-2.5 py-1 rounded border border-neon-green/40 flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-neon-green animate-ping" />
-              CAPITAL SECURED
-            </span>
-          </div>
-        </div>
-      </div>
-
       {/* 5-Agent Live Telemetry Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* AGENT 1 */}
