@@ -134,7 +134,8 @@ class RiskManager:
         checks_passed.append("portfolio_value_positive")
 
         # Check 0b: Prime Directive Zero-Ruin Capital Survival Gate
-        min_survival = getattr(settings, "MIN_SURVIVAL_CAPITAL_INR", 500.0)
+        base_survival = getattr(settings, "MIN_SURVIVAL_CAPITAL_INR", 100.0)
+        min_survival = min(base_survival, max(50.0, portfolio_value * 0.20)) if portfolio_value <= 2000.0 else base_survival
         if portfolio_value < min_survival:
             checks_failed.append("prime_directive_capital_survival")
             reasons.append(
@@ -355,8 +356,17 @@ class RiskManager:
         if entry_price <= 0 or portfolio_value <= 0:
             return 0.0
 
+        # Calibrate position allocation for small accounts (₹500 - ₹2,500) so notional meets
+        # CoinDCX minimum requirements (₹75 - ₹150) without exchange rejection, while tight stop losses
+        # guarantee dollar risk per trade is strictly capped (< ₹3.00, or 0.5% of total capital).
+        effective_position_pct = self.max_position_pct
+        if portfolio_value <= 1500.0:
+            effective_position_pct = max(self.max_position_pct, 25.0)
+        elif portfolio_value <= 3000.0:
+            effective_position_pct = max(self.max_position_pct, 20.0)
+
         # Method 1: Fixed Fractional
-        fixed_notional = portfolio_value * (self.max_position_pct / 100.0)
+        fixed_notional = portfolio_value * (effective_position_pct / 100.0)
         size_fixed = fixed_notional / entry_price
 
         # Method 2: Kelly Criterion

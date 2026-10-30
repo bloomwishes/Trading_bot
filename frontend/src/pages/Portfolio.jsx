@@ -30,7 +30,7 @@ import {
 } from 'recharts';
 import AnimatedNumber from '../components/AnimatedNumber';
 import ResetPaperModal from '../components/ResetPaperModal';
-import { getPortfolioCurrent, getHoldings, getPortfolioSnapshots } from '../utils/api';
+import { getPortfolioCurrent, getHoldings, getPortfolioSnapshots, adoptHoldings, rebalanceToCash } from '../utils/api';
 import { formatINR, formatPercent, formatDate, formatPair } from '../utils/formatters';
 
 // Color palette for asset allocation visualizer
@@ -57,6 +57,8 @@ export default function Portfolio() {
   const [assetFilter, setAssetFilter] = useState('all'); // 'all' | 'crypto' | 'cash'
   const [chartTimeframe, setChartTimeframe] = useState('all'); // '24h' | '7d' | '30d' | 'all'
   const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState(null);
 
   const mode = status?.mode || portfolioData?.mode || 'paper';
   const isLive = mode === 'live';
@@ -71,6 +73,38 @@ export default function Portfolio() {
       console.error('Failed to load portfolio current:', err);
     }
   }, []);
+
+  const handleAdoptHoldings = async () => {
+    setActionLoading(true);
+    setActionMessage(null);
+    try {
+      const res = await adoptHoldings();
+      setActionMessage({ type: 'success', text: res.data.message });
+      await loadPortfolio();
+    } catch (err) {
+      setActionMessage({ type: 'error', text: err?.response?.data?.detail || 'Failed to adopt holdings' });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRebalanceToCash = async () => {
+    if (!window.confirm("Convert all spot crypto holdings (XRP, SHIB) into liquid INR cash at live market price? This gives the trading bot 100% liquid INR capital to trade any pair immediately.")) {
+      return;
+    }
+    setActionLoading(true);
+    setActionMessage(null);
+    try {
+      const res = await rebalanceToCash();
+      setActionMessage({ type: 'success', text: res.data.message });
+      await loadPortfolio();
+      await refetchStatus?.();
+    } catch (err) {
+      setActionMessage({ type: 'error', text: err?.response?.data?.detail || 'Failed to rebalance to cash' });
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   // Fetch historical snapshots for chart
   const loadSnapshots = useCallback(async () => {
@@ -232,6 +266,29 @@ export default function Portfolio() {
             <span>{refreshing ? 'Syncing...' : 'Sync Wallet'}</span>
           </button>
 
+          {isLive && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleAdoptHoldings}
+                disabled={actionLoading}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-neon-cyan/15 hover:bg-neon-cyan/25 border border-neon-cyan/40 text-neon-cyan text-xs font-heading font-semibold transition-all hover:shadow-[0_0_12px_rgba(0,240,255,0.2)] disabled:opacity-50"
+                title="Adopt CoinDCX XRP & SHIB spot balances into active bot tracking with trailing stop-loss & take-profit"
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Adopt Spot Holdings</span>
+              </button>
+              <button
+                onClick={handleRebalanceToCash}
+                disabled={actionLoading}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-neon-green/15 hover:bg-neon-green/25 border border-neon-green/40 text-neon-green text-xs font-heading font-semibold transition-all hover:shadow-[0_0_12px_rgba(0,255,136,0.2)] disabled:opacity-50"
+                title="Convert spot crypto (XRP, SHIB) into pure liquid INR cash on CoinDCX to trade across all strategies immediately"
+              >
+                <Banknote className="w-3.5 h-3.5" />
+                <span>Rebalance to Cash</span>
+              </button>
+            </div>
+          )}
+
           {!isLive && (
             <button
               onClick={() => setResetModalOpen(true)}
@@ -244,6 +301,84 @@ export default function Portfolio() {
           )}
         </div>
       </div>
+
+      {/* Action Notification Message */}
+      {actionMessage && (
+        <div
+          className={`p-3.5 rounded-xl border text-xs font-sans flex items-center justify-between ${
+            actionMessage.type === 'success'
+              ? 'bg-neon-green/10 border-neon-green/30 text-neon-green'
+              : 'bg-neon-red/10 border-neon-red/30 text-neon-red'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {actionMessage.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+            )}
+            <span>{actionMessage.text}</span>
+          </div>
+          <button
+            onClick={() => setActionMessage(null)}
+            className="text-gray-400 hover:text-white ml-2 text-xs font-mono"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Smart Autonomous Capital Strategy Banner (Live Mode) */}
+      {isLive && (
+        <div className="glass-card p-4 rounded-xl border border-neon-cyan/25 bg-cyber-bg/90 shadow-[0_0_20px_rgba(0,240,255,0.04)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-neon-cyan/15 border border-neon-cyan/30 flex items-center justify-center text-neon-cyan shrink-0">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-heading font-bold text-white uppercase tracking-wider">
+                  Live Starting Capital: {formatINR(totalValue)}
+                </span>
+                <span className="text-[10px] text-neon-green font-mono bg-neon-green/10 px-2 py-0.5 rounded-full border border-neon-green/30 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-pulse" />
+                  Zero-Ruin Mandate Active
+                </span>
+                <span className="text-[10px] text-gray-400 font-mono">
+                  Max Risk: ~₹2.50/trade (0.5%)
+                </span>
+              </div>
+              <p className="text-xs text-gray-300 font-sans mt-0.5">
+                {cashBalance < 50 && cryptoHoldingsValue > 50 ? (
+                  <>
+                    Capital is currently held in spot crypto ({holdings.filter((h) => h.currency !== 'INR').map((h) => `${h.currency} (₹${h.value_inr})`).join(', ')}). The bot is actively configured to <strong>auto-adopt and guard them with trailing stops and take-profit exits</strong>. Alternatively, click <em>Rebalance to Cash</em> to liquidate them into liquid INR cash to trade all pairs immediately.
+                  </>
+                ) : (
+                  <>
+                    Liquid INR capital is ready ({formatINR(cashBalance)}). The autonomous agent swarm scans high-probability setups and executes trades strictly within your capital preservation mandate.
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+            <button
+              onClick={handleAdoptHoldings}
+              disabled={actionLoading}
+              className="px-3 py-1.5 rounded-lg bg-neon-cyan/15 hover:bg-neon-cyan/25 border border-neon-cyan/40 text-neon-cyan text-xs font-heading font-semibold transition-all disabled:opacity-50"
+            >
+              Guard &amp; Auto-Sell on Profit
+            </button>
+            <button
+              onClick={handleRebalanceToCash}
+              disabled={actionLoading}
+              className="px-3 py-1.5 rounded-lg bg-neon-green/15 hover:bg-neon-green/25 border border-neon-green/40 text-neon-green text-xs font-heading font-semibold transition-all disabled:opacity-50"
+            >
+              Rebalance to Cash
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 4 Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

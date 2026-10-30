@@ -135,8 +135,9 @@ async def get_current_portfolio(
     except Exception as exc:
         bot_logger.warning(f"Error reading portfolio balances: {exc}")
 
-    # ── Open positions ───────────────────────────────────────────────────
-    open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+    # ── Open positions (filtered by current active mode) ────────────────
+    is_paper = (engine.mode == "paper")
+    open_trades = db.query(Trade).filter(Trade.status == "OPEN", Trade.paper_mode == is_paper).all()
 
     positions: list[dict[str, Any]] = []
     positions_value: float = 0.0
@@ -279,6 +280,49 @@ async def get_holdings(
         "cash_balance_inr": round(cash, 2),
         "crypto_value_inr": round(crypto, 2),
         "holdings": holdings,
+    }
+
+
+@router.post("/adopt-holdings", summary="Adopt spot wallet holdings as active managed trades")
+async def adopt_holdings(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Manually trigger auto-adoption of CoinDCX spot crypto holdings into
+    managed open trades with protective stop-losses and trailing take-profits.
+    """
+    engine = request.app.state.engine
+    if engine.mode != "live":
+        raise HTTPException(status_code=400, detail="Auto-adoption is only available in Live trading mode.")
+
+    adopted = engine.adopt_live_holdings(db)
+    return {
+        "message": f"Successfully adopted {len(adopted)} spot holding(s) as managed trades.",
+        "adopted_positions": adopted,
+    }
+
+
+@router.post("/rebalance-to-cash", summary="Convert spot crypto holdings into liquid INR cash")
+async def rebalance_to_cash(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """
+    Sell all spot crypto holdings at market price on CoinDCX to convert
+    total account balance into 100% liquid INR cash for active multi-pair trading.
+    """
+    engine = request.app.state.engine
+    if engine.mode != "live":
+        raise HTTPException(status_code=400, detail="Rebalancing to cash is only available in Live trading mode.")
+
+    sold = engine.rebalance_holdings_to_cash(db)
+    cash, crypto, holdings = _get_live_holdings(getattr(engine, "exchange_manager", None))
+    return {
+        "message": f"Successfully rebalanced {len(sold)} spot asset(s) to INR cash.",
+        "sold_assets": sold,
+        "new_cash_balance_inr": cash,
+        "new_total_equity_inr": round(cash + crypto, 2),
     }
 
 

@@ -77,6 +77,8 @@ export const getPortfolioSnapshots = () => api.get('/portfolio/snapshots');
 export const getPortfolioCurrent = () => api.get('/portfolio/current');
 export const getHoldings = () => api.get('/portfolio/holdings');
 export const resetPaperAccount = () => api.post('/portfolio/reset-paper');
+export const adoptHoldings = () => api.post('/portfolio/adopt-holdings');
+export const rebalanceToCash = () => api.post('/portfolio/rebalance-to-cash');
 
 // ==========================================
 // LLM DECISIONS & AI Agent

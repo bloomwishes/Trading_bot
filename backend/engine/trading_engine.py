@@ -240,6 +240,13 @@ class TradingEngine:
         self.running = True
         for s in self.strategies:
             s.enable()
+        if self.mode == "live":
+            try:
+                db = SessionLocal()
+                self.adopt_live_holdings(db)
+                db.close()
+            except Exception as ad_err:
+                bot_logger.debug(f"[Engine] Could not auto-adopt holdings on start: {ad_err}")
         bot_logger.info(
             "TradingEngine STARTED [PRIME DIRECTIVE: Autonomous A-to-Z Agency | "
             "Zero Ruin Mandate: Capital preservation is existential. If capital is depleted, the bot is dead. "
@@ -427,7 +434,18 @@ class TradingEngine:
         # -- Pre-Trade Risk Gate (Agent 4) --
         if action == "BUY":
             current_prices = self.exchange_manager.get_current_prices()
-            portfolio_value = self.paper_trader.get_portfolio_value(current_prices)
+            if self.mode == "live":
+                from backend.api.portfolio import _get_live_holdings
+                cash_inr, crypto_inr, _ = _get_live_holdings(self.exchange_manager)
+                portfolio_value = cash_inr + crypto_inr
+                if cash_inr < 50.0:
+                    bot_logger.info(
+                        f"[Engine] Live BUY for {pair} skipped: Available liquid INR cash (₹{cash_inr:.2f}) "
+                        "is below exchange minimum order requirement. Capital is currently held in spot crypto assets."
+                    )
+                    return None
+            else:
+                portfolio_value = self.paper_trader.get_portfolio_value(current_prices)
 
             # Update portfolio monitor with latest mark-to-market equity
             if hasattr(self.risk_manager, "portfolio_monitor"):
@@ -756,6 +774,154 @@ class TradingEngine:
             return None
 
     # ------------------------------------------------------------------
+    # Spot Holdings Auto-Adoption & Rebalance
+    # ------------------------------------------------------------------
+    def adopt_live_holdings(self, db) -> List[Dict[str, Any]]:
+        """
+        Auto-adopt unmanaged exchange spot balances into tracked open trades.
+        Ensures existing spot crypto (e.g. XRP, SHIB in CoinDCX) is guarded
+        by active trailing stop-losses and take-profit targets, and sold
+        when strategy exit signals trigger.
+        """
+        if self.mode != "live" or not self.exchange_manager:
+            return []
+
+        adopted = []
+        try:
+            balances = self.exchange_manager.get_balances()
+            for curr, data in balances.items():
+                if curr == "INR":
+                    continue
+                avail = float(data.get("available", 0) or 0)
+                if avail <= 0:
+                    continue
+
+                pair = f"{curr}/INR"
+                ticker = self.exchange_manager.get_ticker(pair)
+                current_price = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker or 0)
+                if current_price <= 0:
+                    continue
+
+                val_inr = avail * current_price
+                # Only adopt if notional value is at least ₹20
+                if val_inr < 20.0:
+                    continue
+
+                # Check if there's already an OPEN trade for this pair in live mode
+                existing = (
+                    db.query(Trade)
+                    .filter(Trade.status == "OPEN", Trade.pair == pair, Trade.paper_mode == False)
+                    .first()
+                )
+                if existing:
+                    continue
+
+                # Adopt as a managed trade with tight capital preservation controls
+                stop_loss = round(current_price * 0.98, 4)  # 2.0% protective stop
+                take_profit = round(current_price * 1.035, 4)  # 3.5% take profit target
+                trailing_stop = round(current_price * 0.985, 4)
+
+                trade = Trade(
+                    pair=pair,
+                    side="BUY",
+                    quantity=avail,
+                    entry_price=round(current_price, 4),
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
+                    trailing_stop=trailing_stop,
+                    strategy="Asset_Guardian",
+                    status="OPEN",
+                    paper_mode=False,
+                    created_at=datetime.utcnow(),
+                    entry_reason=f"Auto-adopted {avail} {curr} (~₹{val_inr:.2f}) from CoinDCX spot wallet",
+                )
+                db.add(trade)
+                db.commit()
+                db.refresh(trade)
+
+                if hasattr(self, "position_tracker"):
+                    self.position_tracker.open_position({
+                        "pair": pair,
+                        "side": "BUY",
+                        "quantity": avail,
+                        "price": current_price,
+                        "stop_loss": stop_loss,
+                        "take_profit": take_profit,
+                        "strategy": "Asset_Guardian",
+                        "trade_id": trade.id,
+                    })
+
+                bot_logger.info(
+                    f"[Engine] Auto-adopted live spot holding: {avail} {curr} (~₹{val_inr:.2f}) @ ₹{current_price} "
+                    f"with SL=₹{stop_loss} and TP=₹{take_profit}"
+                )
+                adopted.append({
+                    "id": trade.id,
+                    "currency": curr,
+                    "pair": pair,
+                    "quantity": avail,
+                    "value_inr": round(val_inr, 2),
+                    "stop_loss": stop_loss,
+                    "take_profit": take_profit,
+                })
+        except Exception as e:
+            bot_logger.warning(f"[Engine] Error adopting live holdings: {e}")
+
+        return adopted
+
+    def rebalance_holdings_to_cash(self, db) -> List[Dict[str, Any]]:
+        """
+        Execute market SELL orders on CoinDCX for all held spot crypto
+        (e.g. XRP, SHIB) to convert them into liquid INR cash capital.
+        """
+        if self.mode != "live" or not self.exchange_manager:
+            return []
+
+        sold_list = []
+        balances = self.exchange_manager.get_balances()
+        for curr, data in balances.items():
+            if curr == "INR":
+                continue
+            avail = float(data.get("available", 0) or 0)
+            if avail <= 0:
+                continue
+
+            pair = f"{curr}/INR"
+            rounded_qty = self.exchange_manager.round_quantity(pair, avail)
+            if rounded_qty <= 0:
+                continue
+
+            ticker = self.exchange_manager.get_ticker(pair)
+            current_price = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker or 0)
+
+            order_res = self.exchange_manager.place_order(
+                pair=pair,
+                side="SELL",
+                quantity=rounded_qty,
+                price=current_price,
+                order_type="MARKET",
+            )
+            # Close any existing open trade in DB for this pair
+            open_trades = db.query(Trade).filter(Trade.status == "OPEN", Trade.pair == pair, Trade.paper_mode == False).all()
+            for t in open_trades:
+                t.status = "CLOSED"
+                t.closed_at = datetime.utcnow()
+                t.exit_price = current_price
+                t.exit_reason = "REBALANCE_TO_CASH"
+                t.pnl = 0.0
+            db.commit()
+
+            sold_list.append({
+                "currency": curr,
+                "pair": pair,
+                "quantity": rounded_qty,
+                "order_result": order_res,
+            })
+            bot_logger.info(f"[Engine] Rebalanced {rounded_qty} {curr} to INR cash via CoinDCX market sell.")
+
+        return sold_list
+
+    # ------------------------------------------------------------------
     # Open trade management
     # ------------------------------------------------------------------
     def check_open_trades(self):
@@ -777,9 +943,16 @@ class TradingEngine:
 
         db = SessionLocal()
         try:
+            if self.mode == "live":
+                try:
+                    self.adopt_live_holdings(db)
+                except Exception as ad_err:
+                    bot_logger.debug(f"[Engine] Auto-adopt in check_open_trades error: {ad_err}")
+
+            is_paper = (self.mode == "paper")
             open_trades = (
                 db.query(Trade)
-                .filter(Trade.status == "OPEN")
+                .filter(Trade.status == "OPEN", Trade.paper_mode == is_paper)
                 .all()
             )
 

@@ -52,8 +52,11 @@ async def get_open_trades(
     db: Session = Depends(get_db),
 ) -> list[TradeResponse]:
     query = db.query(Trade).filter(Trade.status == "OPEN")
+    engine = getattr(request.app.state, "engine", None)
     if paper_mode is not None:
         query = query.filter(Trade.paper_mode == paper_mode)
+    elif engine and hasattr(engine, "mode"):
+        query = query.filter(Trade.paper_mode == (engine.mode == "paper"))
     trades = query.order_by(desc(Trade.created_at)).all()
 
     # Try to fetch current live prices to calculate real-time unrealized PnL
