@@ -381,3 +381,30 @@ class CoinDCXClient:
         except Exception as exc:
             bot_logger.error(f"CoinDCX get_order_status({order_id}) error: {exc}")
             return {"error": str(exc)}
+
+    def get_active_orders(self) -> List[Dict[str, Any]]:
+        """Fetch currently active orders on CoinDCX."""
+        try:
+            body = {"timestamp": int(time.time() * 1000)}
+            data = self._private_post("/exchange/v1/orders/active_orders", body)
+            if isinstance(data, dict):
+                return data.get("orders", [])
+            elif isinstance(data, list):
+                return data
+            return []
+        except Exception as exc:
+            bot_logger.error(f"CoinDCX get_active_orders error: {exc}")
+            return []
+
+    def get_trade_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Fetch trade history from CoinDCX."""
+        try:
+            body = {
+                "timestamp": int(time.time() * 1000),
+                "limit": limit,
+            }
+            data = self._private_post("/exchange/v1/orders/trade_history", body)
+            return data if isinstance(data, list) else []
+        except Exception as exc:
+            bot_logger.error(f"CoinDCX get_trade_history error: {exc}")
+            return []

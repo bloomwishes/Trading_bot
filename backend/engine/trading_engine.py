@@ -240,13 +240,6 @@ class TradingEngine:
         self.running = True
         for s in self.strategies:
             s.enable()
-        if self.mode == "live":
-            try:
-                db = SessionLocal()
-                self.adopt_live_holdings(db)
-                db.close()
-            except Exception as ad_err:
-                bot_logger.debug(f"[Engine] Could not auto-adopt holdings on start: {ad_err}")
         bot_logger.info(
             "TradingEngine STARTED [PRIME DIRECTIVE: Autonomous A-to-Z Agency | "
             "Zero Ruin Mandate: Capital preservation is existential. If capital is depleted, the bot is dead. "
@@ -943,12 +936,6 @@ class TradingEngine:
 
         db = SessionLocal()
         try:
-            if self.mode == "live":
-                try:
-                    self.adopt_live_holdings(db)
-                except Exception as ad_err:
-                    bot_logger.debug(f"[Engine] Auto-adopt in check_open_trades error: {ad_err}")
-
             is_paper = (self.mode == "paper")
             open_trades = (
                 db.query(Trade)
