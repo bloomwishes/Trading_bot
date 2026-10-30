@@ -20,8 +20,60 @@ from backend.schemas import PortfolioSnapshotResponse
 from backend.monitoring.performance_analytics import PerformanceAnalytics
 from backend.utils.auth import require_api_key
 from backend.config import settings
+from backend.utils.logger import bot_logger
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
+
+
+def _get_live_holdings(exchange_manager: Any) -> tuple[float, float, list[dict[str, Any]]]:
+    """
+    Query real-time exchange balances from CoinDCX and convert each asset to INR.
+    Returns: (cash_balance_inr, total_crypto_value_inr, holdings_list)
+    """
+    if not exchange_manager:
+        return 0.0, 0.0, []
+
+    cash_inr: float = 0.0
+    crypto_val: float = 0.0
+    holdings: list[dict[str, Any]] = []
+
+    try:
+        balances = exchange_manager.get_balances() if hasattr(exchange_manager, "get_balances") else {}
+        for curr, data in balances.items():
+            avail = float(data.get("available", 0) or 0)
+            locked = float(data.get("locked", 0) or 0)
+            total_qty = avail + locked
+            if total_qty <= 0:
+                continue
+
+            if curr == "INR":
+                cash_inr = round(avail, 2)
+                price_inr = 1.0
+                val_inr = round(total_qty, 2)
+            else:
+                price_inr = 0.0
+                try:
+                    ticker = exchange_manager.get_ticker(f"{curr}/INR")
+                    price_inr = float(ticker.get("last_price", 0)) if isinstance(ticker, dict) else float(ticker or 0)
+                except Exception:
+                    price_inr = 0.0
+                val_inr = round(total_qty * price_inr, 2)
+                crypto_val += val_inr
+
+            holdings.append({
+                "currency": curr,
+                "available": round(avail, 6),
+                "locked": round(locked, 6),
+                "total": round(total_qty, 6),
+                "price_inr": round(price_inr, 4),
+                "value_inr": val_inr,
+            })
+
+        holdings.sort(key=lambda x: x["value_inr"], reverse=True)
+    except Exception as exc:
+        bot_logger.warning(f"Failed to fetch live exchange holdings: {exc}")
+
+    return cash_inr, round(crypto_val, 2), holdings
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -70,18 +122,18 @@ async def get_current_portfolio(
     """
     engine = request.app.state.engine
 
-    # ── Cash balance ─────────────────────────────────────────────────────
+    # ── Cash balance & holdings ──────────────────────────────────────────
     cash_balance: float = 0.0
+    holdings: list[dict[str, Any]] = []
+    live_crypto_val: float = 0.0
     try:
         if engine.mode == "paper":
             paper = engine.paper_trader
             cash_balance = float(getattr(paper, "balance", 0))
         else:
-            exchange = engine.exchange_manager
-            balance = exchange.fetch_balance() if hasattr(exchange, "fetch_balance") else {}
-            cash_balance = float(balance.get("INR", {}).get("free", 0)) if isinstance(balance, dict) else 0.0
-    except Exception:
-        pass
+            cash_balance, live_crypto_val, holdings = _get_live_holdings(getattr(engine, "exchange_manager", None))
+    except Exception as exc:
+        bot_logger.warning(f"Error reading portfolio balances: {exc}")
 
     # ── Open positions ───────────────────────────────────────────────────
     open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
@@ -128,14 +180,56 @@ async def get_current_portfolio(
 
         positions_value += position_value
 
-    total_value = cash_balance + positions_value
+    if engine.mode == "live":
+        total_value = cash_balance + live_crypto_val + positions_value
+        reported_positions_value = live_crypto_val + positions_value
+    else:
+        total_value = cash_balance + positions_value
+        reported_positions_value = positions_value
 
     return {
+        "mode": engine.mode,
         "total_value_inr": round(total_value, 2),
         "cash_balance_inr": round(cash_balance, 2),
-        "positions_value_inr": round(positions_value, 2),
+        "positions_value_inr": round(reported_positions_value, 2),
         "active_positions": len(positions),
         "positions": positions,
+        "holdings": holdings,
+    }
+
+
+@router.get("/holdings", summary="Live exchange wallet holdings")
+async def get_holdings(request: Request) -> dict[str, Any]:
+    """
+    Returns real-time exchange wallet balances and INR value breakdown.
+    """
+    engine = request.app.state.engine
+    if engine.mode == "paper":
+        cash = float(getattr(engine.paper_trader, "balance", 0)) if hasattr(engine, "paper_trader") else 0.0
+        return {
+            "mode": "paper",
+            "total_value_inr": round(cash, 2),
+            "cash_balance_inr": round(cash, 2),
+            "crypto_value_inr": 0.0,
+            "holdings": [
+                {
+                    "currency": "INR",
+                    "available": round(cash, 2),
+                    "locked": 0.0,
+                    "total": round(cash, 2),
+                    "price_inr": 1.0,
+                    "value_inr": round(cash, 2),
+                }
+            ],
+        }
+
+    cash, crypto, holdings = _get_live_holdings(getattr(engine, "exchange_manager", None))
+    return {
+        "mode": "live",
+        "total_value_inr": round(cash + crypto, 2),
+        "cash_balance_inr": round(cash, 2),
+        "crypto_value_inr": round(crypto, 2),
+        "holdings": holdings,
     }
 
 

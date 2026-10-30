@@ -11,6 +11,9 @@ import {
   QrCode,
   Smartphone,
   Bot,
+  Coins,
+  ArrowUpRight,
+  ShieldCheck,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -153,6 +156,9 @@ export default function Overview() {
   const activeTrades = status?.portfolio?.active_trades || 0;
   const winRate = status?.portfolio?.win_rate_pct || 0;
   const isRunning = status?.running === true;
+  const isLiveMode = status?.mode === 'live';
+  const holdings = status?.portfolio?.holdings || [];
+  const cashBalance = status?.portfolio?.cash_balance_inr || 0;
 
   // Format chart data
   const chartData = snapshots.slice(-48).map((snap) => ({
@@ -234,6 +240,108 @@ export default function Overview() {
 
       {/* Autonomous Agent Swarm Real-time Activity Card */}
       <AgentSwarmStatus onNavigateToAgents={() => navigate('/agents')} />
+
+      {/* CoinDCX Live Wallet Holdings Card */}
+      {isLiveMode && holdings.length > 0 && (
+        <div className="glass-card p-5 border border-neon-cyan/25 animate-fade-in shadow-[0_0_30px_rgba(0,240,255,0.06)]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-white/5">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-neon-cyan/15 border border-neon-cyan/30 flex items-center justify-center glow-cyan text-neon-cyan">
+                <Coins className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-heading font-bold text-white tracking-wide">
+                    CoinDCX Live Wallet Holdings
+                  </h2>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-neon-green/15 text-neon-green border border-neon-green/30 font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-neon-green animate-ping" />
+                    LIVE SPOT ASSETS
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Real-time balances fetched directly from your authenticated CoinDCX exchange wallet
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 text-xs font-mono">
+              <div className="text-right">
+                <span className="text-gray-400 text-[10px] uppercase block">Total Live Equity</span>
+                <span className="text-white font-bold text-sm text-neon-cyan">{formatINR(portfolioValue)}</span>
+              </div>
+              <div className="text-right pl-3 border-l border-white/10">
+                <span className="text-gray-400 text-[10px] uppercase block">Cash (INR)</span>
+                <span className="text-gray-200 font-semibold">{formatINR(cashBalance)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Holdings Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs font-sans">
+              <thead>
+                <tr className="border-b border-white/5 text-[10px] font-mono uppercase text-gray-400">
+                  <th className="py-2.5 px-3">Asset</th>
+                  <th className="py-2.5 px-3 text-right">Available Qty</th>
+                  <th className="py-2.5 px-3 text-right">In Orders</th>
+                  <th className="py-2.5 px-3 text-right">Market Price (INR)</th>
+                  <th className="py-2.5 px-3 text-right">Estimated Value</th>
+                  <th className="py-2.5 px-3 text-right">Portfolio Share</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 font-mono">
+                {holdings.map((h, i) => {
+                  const pct = portfolioValue > 0 ? ((h.value_inr / portfolioValue) * 100).toFixed(1) : 0;
+                  const isCash = h.currency === 'INR';
+                  return (
+                    <tr key={i} className="hover:bg-white/[0.03] transition-colors">
+                      <td className="py-3 px-3">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-7 h-7 rounded-md flex items-center justify-center font-bold text-[11px] ${
+                            isCash
+                              ? 'bg-neon-green/20 text-neon-green border border-neon-green/30'
+                              : 'bg-neon-cyan/20 text-neon-cyan border border-neon-cyan/30'
+                          }`}>
+                            {h.currency.slice(0, 3)}
+                          </span>
+                          <div>
+                            <span className="text-white font-bold block">{h.currency}</span>
+                            <span className="text-[10px] text-gray-500">{isCash ? 'Fiat Cash' : 'Spot Crypto'}</span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-right text-gray-200 font-medium">
+                        {h.available.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      </td>
+                      <td className="py-3 px-3 text-right text-gray-400">
+                        {h.locked > 0 ? h.locked.toLocaleString(undefined, { maximumFractionDigits: 6 }) : '—'}
+                      </td>
+                      <td className="py-3 px-3 text-right text-gray-300">
+                        {isCash ? '₹1.00' : formatINR(h.price_inr)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-bold text-white">
+                        {formatINR(h.value_inr)}
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-16 h-1.5 rounded-full bg-white/10 overflow-hidden">
+                            <div
+                              className="h-full bg-neon-cyan rounded-full"
+                              style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
+                            />
+                          </div>
+                          <span className="text-[11px] text-gray-400 min-w-[36px]">{pct}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Charts & Signals row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -18,6 +18,7 @@ from backend.config import settings
 from backend.monitoring.health_monitor import health_monitor
 from backend.monitoring.alert_manager import alert_manager
 from backend.monitoring.performance_analytics import PerformanceAnalytics
+from backend.api.portfolio import _get_live_holdings
 
 router = APIRouter(prefix="/api", tags=["status"])
 
@@ -65,6 +66,7 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
     cash_balance: float = 0.0
     positions_value: float = 0.0
     unrealized_pnl: float = 0.0
+    holdings: list[dict[str, Any]] = []
     try:
         if engine.mode == "paper":
             paper = engine.paper_trader
@@ -86,12 +88,20 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
                     positions_value += pos_val
                     mult = 1.0 if side == "BUY" else -1.0
                     unrealized_pnl += (cur_p - entry_p) * qty * mult
+                    curr = pair.replace("/INR", "").replace("INR", "")
+                    holdings.append({
+                        "currency": curr,
+                        "available": qty,
+                        "locked": 0.0,
+                        "total": qty,
+                        "price_inr": round(cur_p, 4),
+                        "value_inr": round(pos_val, 2),
+                    })
             total_value = cash_balance + positions_value
         else:
-            exchange = engine.exchange_manager
-            balance = exchange.fetch_balance() if hasattr(exchange, "fetch_balance") else {}
-            cash_balance = float(balance.get("INR", {}).get("free", 0)) if isinstance(balance, dict) else 0.0
-            total_value = float(balance.get("INR", {}).get("total", cash_balance)) if isinstance(balance, dict) else cash_balance
+            cash_balance, crypto_value, holdings = _get_live_holdings(getattr(engine, "exchange_manager", None))
+            positions_value = crypto_value
+            total_value = cash_balance + positions_value
     except Exception:
         pass
 
@@ -155,6 +165,7 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
             "today_pnl_pct": today_pnl_pct,
             "total_pnl": total_pnl,
             "unrealized_pnl": round(unrealized_pnl, 2),
+            "holdings": holdings,
         },
         "health_summary": {
             "status": health_stat.get("overall_status", "healthy"),
