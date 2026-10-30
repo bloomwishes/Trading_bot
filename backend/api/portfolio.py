@@ -186,6 +186,27 @@ async def get_current_portfolio(
     else:
         total_value = cash_balance + positions_value
         reported_positions_value = positions_value
+        # Simulated holdings in paper trading mode
+        holdings = [
+            {
+                "currency": "INR",
+                "available": round(cash_balance, 2),
+                "locked": 0.0,
+                "total": round(cash_balance, 2),
+                "price_inr": 1.0,
+                "value_inr": round(cash_balance, 2),
+            }
+        ]
+        for pos in positions:
+            base_curr = pos["pair"].split("/")[0] if "/" in pos["pair"] else pos["pair"].replace("INR", "")
+            holdings.append({
+                "currency": base_curr,
+                "available": pos["quantity"],
+                "locked": 0.0,
+                "total": pos["quantity"],
+                "price_inr": pos["current_price"],
+                "value_inr": pos["position_value_inr"],
+            })
 
     return {
         "mode": engine.mode,
@@ -199,28 +220,56 @@ async def get_current_portfolio(
 
 
 @router.get("/holdings", summary="Live exchange wallet holdings")
-async def get_holdings(request: Request) -> dict[str, Any]:
+async def get_holdings(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     """
     Returns real-time exchange wallet balances and INR value breakdown.
     """
     engine = request.app.state.engine
     if engine.mode == "paper":
         cash = float(getattr(engine.paper_trader, "balance", 0)) if hasattr(engine, "paper_trader") else 0.0
+        holdings = [
+            {
+                "currency": "INR",
+                "available": round(cash, 2),
+                "locked": 0.0,
+                "total": round(cash, 2),
+                "price_inr": 1.0,
+                "value_inr": round(cash, 2),
+            }
+        ]
+        crypto_val = 0.0
+        try:
+            open_trades = db.query(Trade).filter(Trade.status == "OPEN").all()
+            for trade in open_trades:
+                current_price = trade.entry_price
+                try:
+                    ticker = engine.exchange_manager.get_ticker(trade.pair)
+                    current_price = float(ticker.get("last_price", trade.entry_price)) if isinstance(ticker, dict) else float(ticker)
+                except Exception:
+                    pass
+                val = round(current_price * trade.quantity, 2)
+                crypto_val += val
+                base_curr = trade.pair.split("/")[0] if "/" in trade.pair else trade.pair.replace("INR", "")
+                holdings.append({
+                    "currency": base_curr,
+                    "available": round(trade.quantity, 6),
+                    "locked": 0.0,
+                    "total": round(trade.quantity, 6),
+                    "price_inr": round(current_price, 4),
+                    "value_inr": val,
+                })
+        except Exception:
+            pass
+
         return {
             "mode": "paper",
-            "total_value_inr": round(cash, 2),
+            "total_value_inr": round(cash + crypto_val, 2),
             "cash_balance_inr": round(cash, 2),
-            "crypto_value_inr": 0.0,
-            "holdings": [
-                {
-                    "currency": "INR",
-                    "available": round(cash, 2),
-                    "locked": 0.0,
-                    "total": round(cash, 2),
-                    "price_inr": 1.0,
-                    "value_inr": round(cash, 2),
-                }
-            ],
+            "crypto_value_inr": round(crypto_val, 2),
+            "holdings": holdings,
         }
 
     cash, crypto, holdings = _get_live_holdings(getattr(engine, "exchange_manager", None))

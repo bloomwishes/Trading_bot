@@ -2,6 +2,7 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
+  Wallet,
   TrendingUp,
   History,
   Radar,
@@ -16,6 +17,7 @@ import {
 
 const navItems = [
   { path: '/', label: 'Overview', icon: LayoutDashboard },
+  { path: '/portfolio', label: 'Portfolio', icon: Wallet },
   { path: '/agents', label: 'Agent Swarm', icon: Bot },
   { path: '/trades', label: 'Live Trades', icon: TrendingUp },
   { path: '/history', label: 'History', icon: History },

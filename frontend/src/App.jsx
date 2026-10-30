@@ -2,6 +2,7 @@ import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Overview from './pages/Overview';
+import Portfolio from './pages/Portfolio';
 import LiveTrades from './pages/LiveTrades';
 import TradeHistory from './pages/TradeHistory';
 import Scanner from './pages/Scanner';
@@ -18,6 +19,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={<Overview />} />
+        <Route path="portfolio" element={<Portfolio />} />
         <Route path="agents" element={<AgentHub />} />
         <Route path="trades" element={<LiveTrades />} />
         <Route path="history" element={<TradeHistory />} />

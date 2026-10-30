@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import StatusBadge from './StatusBadge';
 import PaperLiveToggle from './PaperLiveToggle';
@@ -11,6 +11,7 @@ import MobileQRCodeModal from './MobileQRCodeModal';
 
 export default function Layout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [status, setStatus] = useState(null);
   const [portfolio, setPortfolio] = useState(null);
   const [isConnected, setIsConnected] = useState(true);
@@ -120,18 +121,22 @@ export default function Layout() {
           {/* Right section */}
           <div className="flex items-center gap-3 sm:gap-6">
             {/* Portfolio value */}
-            <div className="text-right">
-              <p className="text-[9px] sm:text-[10px] uppercase tracking-wider text-gray-500 font-heading">
-                Portfolio
+            <button
+              onClick={() => navigate('/portfolio')}
+              className="text-right group p-1 -m-1 rounded-lg hover:bg-white/5 transition-all text-left sm:text-right cursor-pointer"
+              title="Open Portfolio & Asset Holdings"
+            >
+              <p className="text-[9px] sm:text-[10px] uppercase tracking-wider text-gray-500 group-hover:text-neon-cyan font-heading transition-colors">
+                Portfolio ↗
               </p>
-              <p className="text-sm sm:text-lg font-bold font-mono text-white">
+              <p className="text-sm sm:text-lg font-bold font-mono text-white group-hover:text-neon-cyan transition-colors">
                 <AnimatedNumber
                   value={portfolioValue}
                   prefix="₹"
                   decimals={2}
                 />
               </p>
-            </div>
+            </button>
 
             {/* Mobile QR Code button */}
             <button
