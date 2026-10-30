@@ -133,6 +133,25 @@ class RiskManager:
             )
         checks_passed.append("portfolio_value_positive")
 
+        # Check 0b: Prime Directive Zero-Ruin Capital Survival Gate
+        min_survival = getattr(settings, "MIN_SURVIVAL_CAPITAL_INR", 500.0)
+        if portfolio_value < min_survival:
+            checks_failed.append("prime_directive_capital_survival")
+            reasons.append(
+                f"PRIME DIRECTIVE ENFORCED: Capital ₹{portfolio_value:.2f} is below minimum survival threshold ₹{min_survival:.2f}. "
+                "Trading halted to prevent total bot death."
+            )
+            return RiskDecision(
+                approved=False,
+                adjusted_signal=None,
+                reasons=reasons,
+                checks_passed=checks_passed,
+                checks_failed=checks_failed,
+                position_size=0.0,
+                risk_per_trade_pct=0.0,
+            )
+        checks_passed.append("prime_directive_capital_survival")
+
         # Check 1: Emergency circuit breaker
         if not self.emergency_shutdown.is_trading_allowed():
             checks_failed.append("emergency_circuit_breaker")

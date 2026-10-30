@@ -240,7 +240,11 @@ class TradingEngine:
         self.running = True
         for s in self.strategies:
             s.enable()
-        bot_logger.info("TradingEngine STARTED (All strategies ENABLED, conflicts managed by SignalAggregator)")
+        bot_logger.info(
+            "TradingEngine STARTED [PRIME DIRECTIVE: Autonomous A-to-Z Agency | "
+            "Zero Ruin Mandate: Capital preservation is existential. If capital is depleted, the bot is dead. "
+            "Operate end-to-end to run successfully without losing capital.]"
+        )
 
     def stop(self):
         """Stop the trading engine."""

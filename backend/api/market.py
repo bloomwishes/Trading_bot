@@ -333,7 +333,9 @@ async def analyze_market(
     if not market_summary:
         market_summary = [f"- {s}/INR: Data unavailable" for s in symbol_list]
 
-    prompt = f"""You are a professional cryptocurrency trading analyst. Analyze the following live market data and provide actionable trading recommendations.
+    prompt = f"""PRIME DIRECTIVE: You are an autonomous multi-agent intelligence unit with complete A-to-Z execution responsibility. Capital preservation is existential: If capital is depleted, the bot is dead. Your supreme directive is to ensure the bot operates successfully and profitably without risking capital ruin.
+
+You are a professional cryptocurrency trading analyst. Analyze the following live market data and provide actionable trading recommendations.
 
 LIVE MARKET DATA (INR pairs):
 {chr(10).join(market_summary)}

@@ -50,10 +50,11 @@ export default function AgentSwarmStatus({ onNavigateToAgents }) {
       id: 1,
       name: 'Agent 1',
       title: 'Market Feeds & Regime',
+      survivalRole: 'Autonomous Feed Guard',
       icon: Radio,
       color: 'neon-cyan',
       status: healthData?.checks?.websocket_feed?.status === 'ok' ? 'STREAMING' : 'ACTIVE',
-      task: 'Ingesting CoinDCX WebSocket + REST feeds, calculating ADX/ATR market regimes',
+      task: 'Autonomous A-to-Z feed ingestion & regime detection. Prevents bot death from stale feeds or erratic illiquid markets.',
       details: [
         { label: 'Feeds', val: 'CoinDCX + Binance' },
         { label: 'Candle Cache', val: '15s TTL (Warmed)' },
@@ -65,10 +66,11 @@ export default function AgentSwarmStatus({ onNavigateToAgents }) {
       id: 2,
       name: 'Agent 2',
       title: 'Strategy & Signal Intelligence',
+      survivalRole: 'Autonomous Alpha Engine',
       icon: Cpu,
       color: 'neon-yellow',
       status: '12 STRATEGIES',
-      task: 'Running Triple Deep MLPs (24 feats), Mean Reversion, Scalping & 2x Dominance filtering',
+      task: 'High-conviction signal synthesis. Enforces 2x dominance & confidence gates so weak setups never risk capital.',
       details: [
         { label: 'Models', val: 'BTC, ETH, ALTS MLPs' },
         { label: 'Aggregator', val: 'Dominance & 300s Throttle' },
@@ -80,10 +82,11 @@ export default function AgentSwarmStatus({ onNavigateToAgents }) {
       id: 3,
       name: 'Agent 3',
       title: 'Smart Order Router & Execution',
+      survivalRole: 'Autonomous Execution Guard',
       icon: ArrowLeftRight,
       color: 'neon-green',
       status: 'SOR ACTIVE',
-      task: 'Analyzing depth: <5% Market, 5-20% Mid-Limit, >20% TWAP with slippage tracking',
+      task: 'End-to-end liquidity routing (TWAP, mid-limit). Eliminates slippage bleed to protect every rupee of capital.',
       details: [
         { label: 'Router', val: 'Smart Liquidity Router' },
         { label: 'Positions', val: 'Unified VWAP Tracker' },
@@ -95,13 +98,14 @@ export default function AgentSwarmStatus({ onNavigateToAgents }) {
       id: 4,
       name: 'Agent 4',
       title: 'Risk Management & Capital Guard',
+      survivalRole: 'Existential Capital Guardian',
       icon: ShieldAlert,
       color: 'neon-magenta',
       status: riskData?.trading_allowed ? 'GATE GUARDED' : 'HALTED',
-      task: 'Enforcing 10+ pre-trade checks, Half-Kelly sizing, correlation & circuit breakers',
+      task: 'Enforces Zero-Ruin mandate: halts if capital < ₹500, Half-Kelly sizing, correlation & auto circuit breakers.',
       details: [
+        { label: 'Survival Gate', val: '≥ ₹500 Min Capital' },
         { label: 'Max Drawdown', val: `${riskData?.current_drawdown_pct?.toFixed(1) || 0}% / 15%` },
-        { label: 'Loss Streak', val: `${riskData?.loss_streak || 0} / 3 Max` },
         { label: 'Circuit Breaker', val: riskData?.emergency_shutdown_triggered ? 'TRIGGERED' : 'ARMED' },
       ],
       badgeColor: 'border-neon-magenta/40 text-neon-magenta bg-neon-magenta/10',
@@ -110,10 +114,11 @@ export default function AgentSwarmStatus({ onNavigateToAgents }) {
       id: 5,
       name: 'Agent 5',
       title: 'Monitoring, Analytics & Alerts',
+      survivalRole: 'Autonomous Health & Survival',
       icon: Activity,
       color: 'neon-cyan',
       status: healthData?.overall_status?.toUpperCase() || 'HEALTHY',
-      task: 'Calculating Sharpe/Sortino ratios, 100/30-trade rolling degradation & Telegram digest',
+      task: '24/7 autonomous monitoring of bot survival, rolling Sharpe/Sortino degradation & instant failover.',
       details: [
         { label: 'Sharpe Ratio', val: `${analyticsData?.risk_adjusted?.sharpe_ratio || '1.85'}` },
         { label: 'Profit Factor', val: `${analyticsData?.summary?.profit_factor || '1.92'}` },
@@ -158,6 +163,36 @@ export default function AgentSwarmStatus({ onNavigateToAgents }) {
         )}
       </div>
 
+      {/* Autonomous Prime Directive / Zero-Ruin Mandate Banner */}
+      <div className="mb-4 p-3.5 rounded-xl bg-gradient-to-r from-neon-cyan/10 via-neon-magenta/10 to-neon-yellow/10 border border-neon-cyan/30 shadow-[0_0_20px_rgba(0,240,255,0.08)]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-start sm:items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-neon-cyan/20 border border-neon-cyan/40 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+              <ShieldAlert className="w-4 h-4 text-neon-cyan" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-neon-cyan">
+                  Swarm Prime Directive // Autonomous A-to-Z Agency
+                </span>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neon-magenta/20 text-neon-magenta border border-neon-magenta/40 font-semibold">
+                  ZERO-RUIN MANDATE
+                </span>
+              </div>
+              <p className="text-xs text-gray-200 mt-0.5 font-medium leading-relaxed">
+                All 5 agents operate end-to-end autonomously from A to Z. <span className="text-neon-yellow font-semibold">If trading capital is lost, the bot is dead.</span> Every agent is strictly mandated to preserve capital, maintain positive expectancy, and keep the bot running safely.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+            <span className="text-[10px] font-mono text-gray-400">Survival Gate:</span>
+            <span className="text-[11px] font-mono font-bold text-neon-green bg-black/40 px-2.5 py-0.5 rounded border border-neon-green/30">
+              ≥ ₹500 INR
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Agents Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3.5">
         {agents.map((agent) => {
@@ -191,10 +226,13 @@ export default function AgentSwarmStatus({ onNavigateToAgents }) {
                 </div>
               </div>
 
-              {/* Status pill */}
-              <div className="mb-2">
-                <span className={`text-[9px] font-mono px-2 py-0.5 rounded border font-semibold ${agent.badgeColor}`}>
+              {/* Status pill & Survival Role */}
+              <div className="flex flex-col gap-1 mb-2">
+                <span className={`text-[9px] font-mono px-2 py-0.5 rounded border font-semibold w-fit ${agent.badgeColor}`}>
                   {agent.status}
+                </span>
+                <span className="text-[9px] font-mono text-neon-yellow/90 bg-neon-yellow/10 border border-neon-yellow/20 px-1.5 py-0.5 rounded w-fit truncate">
+                  ⚡ {agent.survivalRole}
                 </span>
               </div>
 

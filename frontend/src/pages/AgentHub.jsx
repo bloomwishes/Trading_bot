@@ -170,23 +170,62 @@ export default function AgentHub() {
         </div>
       )}
 
+      {/* Swarm Prime Directive // Autonomous Survival Mandate */}
+      <div className="p-4 rounded-xl bg-gradient-to-r from-neon-cyan/10 via-neon-magenta/10 to-neon-yellow/10 border border-neon-cyan/30 shadow-[0_0_25px_rgba(0,240,255,0.1)]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-neon-cyan/20 border border-neon-cyan/40 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
+              <ShieldAlert className="w-5 h-5 text-neon-cyan" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-mono font-bold uppercase tracking-wider text-neon-cyan">
+                  Swarm Prime Directive // Autonomous A-to-Z Agency
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-magenta/20 text-neon-magenta border border-neon-magenta/40 font-semibold">
+                  ZERO-RUIN MANDATE
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-green/20 text-neon-green border border-neon-green/40 font-semibold">
+                  SURVIVAL GATE ≥ ₹500
+                </span>
+              </div>
+              <p className="text-xs text-gray-200 mt-1 font-medium leading-relaxed">
+                All 5 agents are engineered to operate end-to-end autonomously from A to Z. <span className="text-neon-yellow font-bold">If trading capital is lost, the bot is dead.</span> Every agent has an existential mandate: preserve capital, execute with positive expectancy, and never take catastrophic risks.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+            <span className="text-[11px] font-mono text-gray-400">Survival Status:</span>
+            <span className="text-xs font-mono font-bold text-neon-green bg-black/50 px-2.5 py-1 rounded border border-neon-green/40 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-neon-green animate-ping" />
+              CAPITAL SECURED
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* 5-Agent Live Telemetry Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* AGENT 1 */}
         <div className="glass-card p-4 border border-neon-cyan/20 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-cyan/10 text-neon-cyan font-bold border border-neon-cyan/30">
                 AGENT 1
               </span>
               <span className="w-2 h-2 rounded-full bg-neon-green animate-ping" />
+            </div>
+            <div className="mb-2">
+              <span className="text-[9px] font-mono text-neon-cyan/90 bg-neon-cyan/10 border border-neon-cyan/20 px-1.5 py-0.5 rounded">
+                ⚡ Autonomous Feed Guard
+              </span>
             </div>
             <div className="flex items-center gap-2 mb-2">
               <Radio className="w-4 h-4 text-neon-cyan" />
               <h3 className="text-sm font-heading font-bold text-white">Market Ingestion</h3>
             </div>
             <p className="text-[11px] text-gray-400 mb-3 leading-snug">
-              CoinDCX WebSocket stream + REST dual feeds with Binance liquidity fallback.
+              Autonomous A-to-Z feed ingestion & regime detection. Prevents trading into stale or erratic illiquid markets.
             </p>
           </div>
           <div className="space-y-1.5 pt-3 border-t border-white/5 font-mono text-[10px]">
@@ -208,18 +247,23 @@ export default function AgentHub() {
         {/* AGENT 2 */}
         <div className="glass-card p-4 border border-neon-yellow/20 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-yellow/10 text-neon-yellow font-bold border border-neon-yellow/30">
                 AGENT 2
               </span>
               <span className="w-2 h-2 rounded-full bg-neon-green animate-ping" />
+            </div>
+            <div className="mb-2">
+              <span className="text-[9px] font-mono text-neon-yellow/90 bg-neon-yellow/10 border border-neon-yellow/20 px-1.5 py-0.5 rounded">
+                ⚡ Autonomous Alpha Engine
+              </span>
             </div>
             <div className="flex items-center gap-2 mb-2">
               <Cpu className="w-4 h-4 text-neon-yellow" />
               <h3 className="text-sm font-heading font-bold text-white">Strategy Engine</h3>
             </div>
             <p className="text-[11px] text-gray-400 mb-3 leading-snug">
-              Triple 24-feat MLPs, Mean Reversion, Scalping & 2x Dominance Aggregation.
+              Triple 24-feat MLPs, Mean Reversion & 2x Dominance. Rejects low-conviction signals to guard capital.
             </p>
           </div>
           <div className="space-y-1.5 pt-3 border-t border-white/5 font-mono text-[10px]">
@@ -241,18 +285,23 @@ export default function AgentHub() {
         {/* AGENT 3 */}
         <div className="glass-card p-4 border border-neon-green/20 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-green/10 text-neon-green font-bold border border-neon-green/30">
                 AGENT 3
               </span>
               <span className="w-2 h-2 rounded-full bg-neon-green animate-ping" />
+            </div>
+            <div className="mb-2">
+              <span className="text-[9px] font-mono text-neon-green/90 bg-neon-green/10 border border-neon-green/20 px-1.5 py-0.5 rounded">
+                ⚡ Autonomous Execution Guard
+              </span>
             </div>
             <div className="flex items-center gap-2 mb-2">
               <ArrowLeftRight className="w-4 h-4 text-neon-green" />
               <h3 className="text-sm font-heading font-bold text-white">Smart Execution</h3>
             </div>
             <p className="text-[11px] text-gray-400 mb-3 leading-snug">
-              Order routing by liquidity depth: Market, Mid-Limit, or TWAP algorithmic slices.
+              Order routing by liquidity depth: Market, Mid-Limit, or TWAP. Strictly eliminates slippage attrition.
             </p>
           </div>
           <div className="space-y-1.5 pt-3 border-t border-white/5 font-mono text-[10px]">
@@ -274,24 +323,29 @@ export default function AgentHub() {
         {/* AGENT 4 */}
         <div className="glass-card p-4 border border-neon-magenta/20 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-magenta/10 text-neon-magenta font-bold border border-neon-magenta/30">
                 AGENT 4
               </span>
               <span className="w-2 h-2 rounded-full bg-neon-green animate-ping" />
+            </div>
+            <div className="mb-2">
+              <span className="text-[9px] font-mono text-neon-magenta/90 bg-neon-magenta/10 border border-neon-magenta/20 px-1.5 py-0.5 rounded">
+                ⚡ Existential Capital Guardian
+              </span>
             </div>
             <div className="flex items-center gap-2 mb-2">
               <Shield className="w-4 h-4 text-neon-magenta" />
               <h3 className="text-sm font-heading font-bold text-white">Risk Protection</h3>
             </div>
             <p className="text-[11px] text-gray-400 mb-3 leading-snug">
-              Pre-trade validation gate (10+ checks), Half-Kelly sizing, and correlation controls.
+              Pre-trade validation gate (10+ checks), Zero-Ruin ₹500 survival gate, Half-Kelly sizing & circuit breaker.
             </p>
           </div>
           <div className="space-y-1.5 pt-3 border-t border-white/5 font-mono text-[10px]">
             <div className="flex justify-between">
-              <span className="text-gray-500">Risk Gate:</span>
-              <span className="text-neon-green font-semibold">Guarded</span>
+              <span className="text-gray-500">Survival Gate:</span>
+              <span className="text-neon-green font-semibold">≥ ₹500 Min</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Max Drawdown:</span>
@@ -307,18 +361,23 @@ export default function AgentHub() {
         {/* AGENT 5 */}
         <div className="glass-card p-4 border border-neon-cyan/20 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-cyan/10 text-neon-cyan font-bold border border-neon-cyan/30">
                 AGENT 5
               </span>
               <span className="w-2 h-2 rounded-full bg-neon-green animate-ping" />
+            </div>
+            <div className="mb-2">
+              <span className="text-[9px] font-mono text-neon-cyan/90 bg-neon-cyan/10 border border-neon-cyan/20 px-1.5 py-0.5 rounded">
+                ⚡ Autonomous Health & Survival
+              </span>
             </div>
             <div className="flex items-center gap-2 mb-2">
               <Activity className="w-4 h-4 text-neon-cyan" />
               <h3 className="text-sm font-heading font-bold text-white">Analytics & Watchdog</h3>
             </div>
             <p className="text-[11px] text-gray-400 mb-3 leading-snug">
-              Calculates Sharpe/Sortino, 100/30-trade rolling degradation & dispatches alerts.
+              24/7 autonomous monitoring of bot survival, rolling Sharpe/Sortino degradation & instant failover.
             </p>
           </div>
           <div className="space-y-1.5 pt-3 border-t border-white/5 font-mono text-[10px]">

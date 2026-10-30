@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.models import Trade
+from backend.config import settings
 from backend.monitoring.health_monitor import health_monitor
 from backend.monitoring.alert_manager import alert_manager
 from backend.monitoring.performance_analytics import PerformanceAnalytics
@@ -170,6 +171,17 @@ async def get_status(request: Request, db: Session = Depends(get_db)) -> dict[st
         "active_alerts": active_alerts,
         "regimes": regimes,
         "tunnel": tunnel_info,
+        "prime_directive": {
+            "mandate": getattr(
+                settings,
+                "PRIME_DIRECTIVE_MANDATE",
+                "Autonomous A-to-Z Agency: Capital preservation is existential. If capital is depleted, the bot is dead. Operate end-to-end to run successfully without losing capital.",
+            ),
+            "min_survival_capital_inr": getattr(settings, "MIN_SURVIVAL_CAPITAL_INR", 500.0),
+            "capital_healthy": total_value >= getattr(settings, "MIN_SURVIVAL_CAPITAL_INR", 500.0),
+            "autonomous_mode": "FULL_A_TO_Z",
+            "zero_ruin_enforced": True,
+        },
     }
 
 

@@ -71,6 +71,11 @@ class Settings:
     COOLDOWN_AFTER_CONSECUTIVE_LOSSES: int = int(os.getenv("COOLDOWN_AFTER_CONSECUTIVE_LOSSES", "3"))
     COOLDOWN_DURATION_MINUTES: int = int(os.getenv("COOLDOWN_DURATION_MINUTES", "60"))
     REDUCE_SIZE_HIGH_VOLATILITY: bool = os.getenv("REDUCE_SIZE_HIGH_VOLATILITY", "True").lower() in ("true", "1")
+    MIN_SURVIVAL_CAPITAL_INR: float = float(os.getenv("MIN_SURVIVAL_CAPITAL_INR", "500.0"))
+    PRIME_DIRECTIVE_MANDATE: str = os.getenv(
+        "PRIME_DIRECTIVE_MANDATE",
+        "Autonomous A-to-Z Agency: Capital preservation is existential. If capital is depleted, the bot is dead. Operate end-to-end to run successfully without losing capital.",
+    )
 
     # ── Watched Pairs (INR denominated) ────────────────────────────────
     WATCHED_PAIRS: list[str] = [

@@ -25,6 +25,7 @@ ai_status: dict[str, Any] = {
     "last_active": None,
     "model": settings.OLLAMA_MODEL,
     "fallback_model": settings.OLLAMA_FALLBACK_MODEL,
+    "prime_directive": "AUTONOMOUS ZERO-RUIN: Capital preservation is existential. If capital is depleted, the bot is dead. Operate A-to-Z to keep the bot running successfully without losing capital.",
 }
 
 # ---------------------------------------------------------------------------
